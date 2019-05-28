@@ -1,7 +1,9 @@
-# k8src
+# k8spkg
 
 An experimental command line tool to manage Kubernetes manifests and
 overcome current kubectl limitations.
+
+THIS PROJECT IS IN EARLY DEVELOPMENT STATE.
 
 ## Goals
 
