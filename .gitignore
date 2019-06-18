@@ -1,2 +1,4 @@
 **/downloads/
 k8src
+.liteide-cache
+.build-cache

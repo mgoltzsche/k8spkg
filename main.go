@@ -1,13 +1,12 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"os"
-	"path/filepath"
 
+	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/mgoltzsche/k8spkg/pkg/state"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
-	"gopkg.in/yaml.v3"
 )
 
 // TODO: look for dependent apiServices that were declared in previous packages
@@ -18,85 +17,110 @@ import (
 //    (BUT DON'T INTRODUCE UNNECESSARY DEPENDENCIES to base services that may be provided by the infrastructure)
 func main() {
 	app := cli.NewApp()
-	app.Name = "k8src"
+	app.Name = "k8pkg"
 	app.Author = "Max Goltzsche"
-	app.Flags = []cli.Flag{
-		cli.BoolTFlag{
-			Name:  "prune",
-			Usage: "Deletes all sources that are labeled with the provided name but not occuring within the applied manifest",
-		},
-	}
 	app.Commands = []cli.Command{
 		{
-			Name:  "apply",
-			Usage: "Applies the input packages waiting for required apiServices patiently",
-			Action: func(c *cli.Context) error {
-				if c.NArg() != 1 {
-					return cli.NewExitError("1 argument required", 1)
+			Name:        "apply",
+			Description: "Applies the provided package(s) waiting for required apiServices to become available",
+			Usage:       "k8spkg apply [--prune] SOURCE...",
+			Flags: []cli.Flag{
+				cli.BoolTFlag{
+					Name:  "prune",
+					Usage: "Deletes all sources that belong to the provided package(s) but were not present within the input",
+				},
+				cli.BoolTFlag{
+					Name:  "all",
+					Usage: "Applies all dependencies as well",
+				},
+			},
+			Action: func(c *cli.Context) (err error) {
+				pkg, err := loadPackage(c)
+				if err != nil {
+					return
 				}
-				panic("TODO: apply")
+				mngr := state.NewPackageManager()
+				return mngr.Apply(pkg)
 			},
 		},
 		{
-			Name:  "manifest",
-			Usage: "Prints the merged manifest",
-			Action: func(c *cli.Context) error {
-				if c.NArg() != 2 {
-					return cli.NewExitError("2 arguments required", 1)
+			Name:        "delete",
+			Description: "Deletes the provided packages from the k8s cluster",
+			Usage:       "k8spkg delete PKG",
+			Action: func(c *cli.Context) (err error) {
+				if c.NArg() != 1 {
+					return cli.NewExitError("no package to delete provided", 1)
 				}
-				return renderManifest(c.Args()[0], c.Args()[1])
+				mngr := state.NewPackageManager()
+				return mngr.Delete(c.Args()[0])
+			},
+		},
+		{
+			Name:        "state",
+			Description: "Returns the state of the provided package within the cluster",
+			Usage:       "k8spkg state PKG",
+			Action: func(c *cli.Context) (err error) {
+				if c.NArg() != 1 {
+					return cli.NewExitError("no package name provided", 1)
+				}
+				mngr := state.NewPackageManager()
+				obj, err := mngr.State(c.Args()[0])
+				if err != nil {
+					return
+				}
+				for _, o := range obj {
+					if err = o.WriteYaml(os.Stdout); err != nil {
+						return
+					}
+				}
+				return
+			},
+		},
+		{
+			Name:        "manifest",
+			Description: "Prints the merged and labeled manifest",
+			Usage:       "k8spkg manifest PKGNAME SOURCEURL",
+			Action: func(c *cli.Context) (err error) {
+				pkg, err := loadPackage(c)
+				if err != nil {
+					return
+				}
+				return pkg.ToYaml(os.Stdout)
 			},
 		},
 		{
 			Name:  "fetch",
 			Usage: "Fetches all remote sources",
 			Action: func(c *cli.Context) (err error) {
-				d, err := loadDescriptor(c)
-				if err != nil {
-					return
-				}
-				return d.DownloadURLs()
+				panic("TODO: fetch remote files into package dir (a way to describe where sources files originate from, can be converted and updated - helm support?)")
 			},
 		},
 		{
 			Name:  "clean",
 			Usage: "Removes the download directory",
 			Action: func(c *cli.Context) (err error) {
-				d, err := loadDescriptor(c)
-				if err != nil {
-					return
-				}
-				return d.Clean()
+				panic("TODO: remove downloaded sources")
 			},
 		},
 	}
+	logrus.SetLevel(logrus.DebugLevel)
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		logrus.Fatalf("k8spkg: %s", err)
 	}
 }
 
-func loadDescriptor(c *cli.Context) (d *SourceDescriptor, err error) {
-	if c.NArg() > 1 {
-		return nil, cli.NewExitError("at most 1 argument expected", 1)
-	}
-	var dir string
-	if c.NArg() == 1 {
-		dir = c.Args()[0]
-	} else {
-		dir, err = os.Getwd()
-		if err != nil {
-			return
-		}
-	}
-	return DescriptorFromFile(filepath.Join(dir, "k8s.src"))
-}
-
-func renderManifest(dir, name string) (err error) {
-	d, err := DescriptorFromFile(DescriptorFile(dir))
+func loadObjects(src string) (o []model.K8sObject, err error) {
+	baseDir, err := os.Getwd()
 	if err != nil {
 		return
 	}
-	str, _ := yaml.Marshal(d)
-	fmt.Println(string(str))
-	return nil
+	return model.Objects(src, baseDir)
+}
+
+func loadPackage(c *cli.Context) (pkg *model.K8sPackage, err error) {
+	if c.NArg() != 2 {
+		return nil, cli.NewExitError("missing argument, required: PKGNAME SOURCEURL", 1)
+	}
+	o, err := loadObjects(c.Args()[1])
+	return model.NewK8sPackage(c.Args()[0], o), err
 }

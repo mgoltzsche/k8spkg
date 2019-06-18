@@ -73,7 +73,9 @@ everything but `ApiService`s and `Deployment`s from the input yaml and wait
 
 - Add a label to all objects within input yaml to identify the package state within the k8s cluster.
 - Run `kubectl apply -f - --prune --d -l LABELQUERY` to install/update a package.
-- Run `kubectl wait --for condition=available [-n NAMESPACE] {apiservice|deploy}/NAME`
+- Run `kubectl wait --for condition=available [-n NAMESPACE] {apiservice|deploy}/NAME`  
+  or  
+  `kubectl rollout status -w [-n NAMESPACE] deploy/NAME`
 
 Optionally all dependencies should be resolved and installed
 
@@ -82,9 +84,9 @@ Optionally all dependencies should be resolved and installed
 - Delete by common label: `kubectl delete all --all-namespaces=true -l LABELQUERY`
 - Wait until deleted: `kubectl wait --for delete`
 
-## TL;DR: Thoughts about dependency management
+## Dependency management (discarded idea)
 
-This is a discussion about how dependent packages could be managed
+This is a discussion about how dependent packages could be managed.  
 
 Dependencies could be declared as:
 * [go-getter](https://github.com/hashicorp/go-getter) URLs (local file access is only allowed within the package descriptor's directory)
@@ -129,7 +131,7 @@ Solution approach:
      Contra: Repetitive, more effort when renaming/swapping a repo. (referring to multiple versions of the same repository would not be possible - though usually you want to avoid that)
 
 
-Solution:
+Solution attempt:
 A _repository_ descriptor declares a fully qualified identifier (FQN) that serves as namespace. The FQN _should_ equal its location (go-getter).
 Repository imports can be declared as a map of namespace prefixes to URLs.  
 A _package_ declares a name. Its ID is the name prefixed with its repository's ID.
@@ -138,8 +140,10 @@ Dependencies are declared as a list of package names prefixed with their reposit
 TBD: Override package dependency
 
 PROBLEM: For consistency/security: Repository ID must equal the repository URL (go-getter) in case of remote packages.
-Otherwise changing a dependent repository's ID so that it overlays an installed package could delete the installed package.
+Otherwise changing a dependent repository's ID so that it overlays an installed package could overwrite the installed package unintentionally.
 PROBLEM: How to deal with parameters? Each package has a configuration of its own and may require different dependencies depending on the environment it should be installed in.
 
-Solution: Don't support dependencies but let the user provide precisely the packages she likes to install and their order.
+Solution: Don't support dependencies but let the user provide explicitly the packages she likes to install and their order.
 Still: It would be great to support local dependencies or rather multi-module packages in order to install cert-manager and some issuers afterwards
+
+KISS!
