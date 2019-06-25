@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	resTypeCallNamespaced = "api-resources --verbs delete --namespaced=true -o name"
-	resTypeCallCluster    = "api-resources --verbs delete --namespaced=false -o name"
+	kubectlResTypeCallNamespaced = "api-resources --verbs delete --namespaced=true -o name"
+	kubectlResTypeCallCluster    = "api-resources --verbs delete --namespaced=false -o name"
 )
 
 var (
@@ -22,8 +22,8 @@ var (
 
 func TestApiResources(t *testing.T) {
 	expectedCalls := []string{
-		resTypeCallCluster,
-		resTypeCallNamespaced,
+		kubectlResTypeCallCluster,
+		kubectlResTypeCallNamespaced,
 	}
 	// with kubectl success
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
@@ -38,5 +38,16 @@ func TestApiResources(t *testing.T) {
 		assert.Equal(t, resTypesCluster, cluster, "cluster types")
 		assert.Equal(t, resTypesNamespaced, namespaced, "namespaced types")
 		assert.Equal(t, resTypes, all, "all types")
+	})
+	// with kubectl failure
+	expectedCalls = []string{kubectlResTypeCallCluster}
+	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
+		_, err := (&ApiResourceTypes{}).Cluster()
+		require.Error(t, err, "Cluster()")
+	})
+	expectedCalls = []string{kubectlResTypeCallNamespaced}
+	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
+		_, err := (&ApiResourceTypes{}).Namespaced()
+		require.Error(t, err, "Namespaced()")
 	})
 }

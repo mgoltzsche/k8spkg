@@ -14,28 +14,10 @@ const (
 	PKG_LABEL = "app.kubernetes.io/part-of"
 )
 
-type K8sPackage struct {
-	Name    string
-	Objects []K8sObject
-}
+type K8sPackage []*K8sObject
 
-func NewK8sPackage(pkgName string, objects []K8sObject) *K8sPackage {
-	if pkgName == "" {
-		panic("empty pkgName provided")
-	}
-	// Sets k8s's part-of and managed-by labels.
-	// See https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
-	for _, o := range objects {
-		m := o.Metadata()
-		m.Labels["app.kubernetes.io/managed-by"] = "k8spkg"
-		m.Labels[PKG_LABEL] = pkgName
-		o.SetMetadata(m)
-	}
-	return &K8sPackage{pkgName, objects}
-}
-
-func (pkg *K8sPackage) ToYaml(writer io.Writer) (err error) {
-	for _, o := range pkg.Objects {
+func (pkg K8sPackage) WriteYaml(writer io.Writer) (err error) {
+	for _, o := range pkg {
 		if err = o.WriteYaml(writer); err != nil {
 			return
 		}
@@ -43,14 +25,35 @@ func (pkg *K8sPackage) ToYaml(writer io.Writer) (err error) {
 	return
 }
 
-type K8sObject map[string]interface{}
+type K8sObject struct {
+	rawK8sObject
+	APIVersion string
+	Namespace  string
+	Kind       string
+	Name       string
+}
 
-func K8sObjectsFromReader(f io.Reader) (obj []K8sObject, err error) {
+type rawK8sObject map[string]interface{}
+
+func NewK8sObject(o map[string]interface{}) *K8sObject {
+	m := asMap(o["metadata"])
+	return &K8sObject{
+		rawK8sObject: rawK8sObject(o),
+		APIVersion:   asString(o["apiVersion"]),
+		Kind:         asString(o["kind"]),
+		Namespace:    asString(m["namespace"]),
+		Name:         asString(m["name"]),
+	}
+}
+
+//type RawK8sObject map[string]interface{}
+
+func K8sObjectsFromReader(f io.Reader) (obj []*K8sObject, err error) {
 	dec := yaml.NewDecoder(f)
 	o := map[string]interface{}{}
 	for ; err == nil; err = dec.Decode(o) {
 		if len(o) > 0 {
-			if err = appendFlattened(K8sObject(o), &obj); err != nil {
+			if err = appendFlattened(o, &obj); err != nil {
 				return
 			}
 			o = map[string]interface{}{}
@@ -62,98 +65,106 @@ func K8sObjectsFromReader(f io.Reader) (obj []K8sObject, err error) {
 	return
 }
 
-func appendFlattened(o K8sObject, flattened *[]K8sObject) (err error) {
-	if o.Kind() == "List" {
-		var ol []K8sObject
-		if ol, err = items(o); err == nil {
-			for _, o := range ol {
-				if err = appendFlattened(o, flattened); err != nil {
-					return
-				}
+func appendFlattened(o rawK8sObject, flattened *[]*K8sObject) (err error) {
+	if o["kind"] != "List" {
+		*flattened = append(*flattened, NewK8sObject(o))
+		return
+	}
+	ol, err := items(o)
+	if err == nil {
+		for _, o := range ol {
+			if err = appendFlattened(o, flattened); err != nil {
+				return
 			}
 		}
-	} else {
-		*flattened = append(*flattened, o)
 	}
 	return
 }
 
 // Returns child objects in case kind=List
-func items(o K8sObject) (items []K8sObject, err error) {
-	if node, ok := o["items"].([]interface{}); !ok || node != nil {
-		if !ok {
-			return nil, errors.New("items property is not a slice")
-		}
-		items = make([]K8sObject, len(node))
-		for i, o := range node {
-			om, ok := o.(map[string]interface{})
-			if !ok {
-				oms, oks := o.(map[interface{}]interface{})
-				if oks {
-					om = map[string]interface{}{}
-					for k, v := range oms {
-						ks, ok := k.(string)
-						if !ok {
-							return nil, errors.Errorf("item key %q is not an string", k)
-						}
-						om[ks] = v
-					}
-				}
-			}
-			if om == nil {
-				return nil, errors.Errorf("item is not an object but %T", o)
-			}
-			items[i] = K8sObject(om)
-		}
+func items(o rawK8sObject) (items []rawK8sObject, err error) {
+	rawItems := asList(o["items"])
+	if rawItems == nil {
+		return nil, errors.New("object of kind List does not declare items")
+	}
+	items = make([]rawK8sObject, len(rawItems))
+	for i, item := range rawItems {
+		items[i] = rawK8sObject(asMap(item))
 	}
 	return
 }
 
-func (o K8sObject) ApiVersion() string {
-	if o["apiVersion"] == nil {
-		return ""
-	} else {
-		return o["apiVersion"].(string)
-	}
+func (o *K8sObject) ID() string {
+	return o.Namespace + "/" + o.Gvk() + "/" + o.Name
 }
 
-func (o K8sObject) Kind() string {
-	if o["kind"] == nil {
-		return ""
-	} else {
-		return o["kind"].(string)
-	}
+func (o *K8sObject) Gvk() string {
+	return o.APIVersion + "/" + o.Kind
 }
 
-func (o K8sObject) Metadata() (meta K8sObjectMeta) {
-	m := asMap(o["metadata"])
-	meta.Namespace = asString(m["namespace"])
-	meta.Name = asString(m["name"])
-	meta.Labels = map[string]string{}
-	for k, v := range asMap(m["labels"]) {
-		meta.Labels[k] = asString(v)
+func (o *K8sObject) Labels() (l map[string]string) {
+	l = map[string]string{}
+	for k, v := range asMap(asMap(o.rawK8sObject["metadata"])["labels"]) {
+		l[k] = asString(v)
 	}
 	return
 }
 
-func (o K8sObject) GetString(path string) string {
-	lastDot := strings.LastIndex(path, ".")
+func (o *K8sObject) CrdGvk() string {
+	group := o.getString("spec.group")
+	version := o.getString("spec.version")
+	kind := o.getString("spec.names.kind")
+	return group + "/" + version + "/" + kind
+}
+
+type OwnerReference struct {
+	APIVersion string
+	Kind       string
+	Name       string
+	UID        string
+}
+
+func (o *K8sObject) OwnerReferences() (r []*OwnerReference) {
+	for _, ref := range asList(lookup(o.rawK8sObject, "metadata.ownerReferences")) {
+		r = append(r, &OwnerReference{
+			APIVersion: asString(asMap(ref)["apiVersion"]),
+			Kind:       asString(asMap(ref)["kind"]),
+			Name:       asString(asMap(ref)["name"]),
+			UID:        asString(asMap(ref)["uuid"]),
+		})
+	}
+	return
+}
+
+func (o *K8sObject) WriteYaml(writer io.Writer) (err error) {
+	if _, err = writer.Write([]byte("---\n")); err == nil {
+		err = yaml.NewEncoder(writer).Encode(o.rawK8sObject)
+	}
+	return errors.Wrapf(err, "encode k8sobject %s/%s to yaml", o.Kind, o.Name)
+}
+
+func lookup(o map[string]interface{}, path string) (r interface{}) {
 	var m map[string]interface{} = o
-	if lastDot >= 0 {
-		m = lookupMap(m, path[:lastDot])
-		path = path[lastDot+1:]
-	}
-	return asString(m[path])
-}
-
-func lookupMap(m map[string]interface{}, path string) (r map[string]interface{}) {
 	r = m
 	if path != "" {
-		for _, property := range strings.Split(path, ".") {
-			r = asMap(r[property])
+		segments := strings.Split(path, ".")
+		for _, property := range segments[:len(segments)-1] {
+			m = asMap(m[property])
 		}
+		r = m[segments[len(segments)-1]]
 	}
 	return
+}
+
+func (o *K8sObject) getString(path string) string {
+	return asString(lookup(o.rawK8sObject, path))
+}
+
+func asList(o interface{}) []interface{} {
+	if l, ok := o.([]interface{}); ok {
+		return l
+	}
+	return nil
 }
 
 func asString(o interface{}) (s string) {
@@ -176,37 +187,4 @@ func asMap(o interface{}) (m map[string]interface{}) {
 		}
 	}
 	return map[string]interface{}{}
-}
-
-func (o K8sObject) SetMetadata(meta K8sObjectMeta) {
-	m := o["metadata"]
-	if m == nil {
-		m = map[string]interface{}{}
-		o["metadata"] = m
-	}
-	b, err := yaml.Marshal(&meta)
-	if err != nil {
-		panic(err)
-	}
-	if err = yaml.Unmarshal(b, m); err != nil {
-		panic(err)
-	}
-}
-
-func (o K8sObject) String() string {
-	return fmt.Sprintf("%s/%s", o.Kind(), o.Metadata().Name)
-}
-
-func (o K8sObject) WriteYaml(writer io.Writer) (err error) {
-	if _, err = writer.Write([]byte("---\n")); err == nil {
-		err = yaml.NewEncoder(writer).Encode(o)
-	}
-	return errors.Wrapf(err, "encode k8sobject %q to yaml", o.Metadata().Name)
-}
-
-// see https://kubernetes.io/docs/reference/federation/v1/definitions/#_v1_objectmeta
-type K8sObjectMeta struct {
-	Name      string            `yaml:"name,omitempty"`
-	Namespace string            `yaml:"namespace,omitempty"`
-	Labels    map[string]string `yaml:"labels,omitempty"`
 }

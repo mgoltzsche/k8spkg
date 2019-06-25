@@ -13,7 +13,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-func Objects(src, baseDir string) (o []K8sObject, err error) {
+// TODO: maybe remove since kustomize should always be used to load sources
+
+func Objects(src, baseDir string) (o []*K8sObject, err error) {
 	if len(baseDir) == 0 {
 		if baseDir, err = os.Getwd(); err != nil {
 			return
@@ -58,7 +60,7 @@ func loadSource(src, baseDir string) (file string, remote bool, err error) {
 	return
 }
 
-func collectObjects(file string, obj *[]K8sObject) (err error) {
+func collectObjects(file string, obj *[]*K8sObject) (err error) {
 	si, err := os.Stat(file)
 	if err != nil {
 		return
@@ -74,7 +76,7 @@ func collectObjects(file string, obj *[]K8sObject) (err error) {
 	return collectFn(file, obj)
 }
 
-func manifests2objects(dir string, obj *[]K8sObject) (err error) {
+func manifests2objects(dir string, obj *[]*K8sObject) (err error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return
@@ -91,7 +93,7 @@ func manifests2objects(dir string, obj *[]K8sObject) (err error) {
 	return nil
 }
 
-func manifest2objects(file string, obj *[]K8sObject) (err error) {
+func manifest2objects(file string, obj *[]*K8sObject) (err error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return
@@ -102,7 +104,7 @@ func manifest2objects(file string, obj *[]K8sObject) (err error) {
 	return
 }
 
-func kustomize2objects(dir string, obj *[]K8sObject) (err error) {
+func kustomize2objects(dir string, obj *[]*K8sObject) (err error) {
 	reader, writer := io.Pipe()
 	defer func() {
 		if e := reader.Close(); e != nil && err == nil {

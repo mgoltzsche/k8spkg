@@ -1,11 +1,12 @@
+---
 apiVersion: certmanager.k8s.io/v1alpha1
 kind: Certificate
 metadata:
-  name: another-cert
+  name: mycert
   namespace: cert-manager
 spec:
-  secretName: another-cert
+  secretName: mycert
   duration: 7000h
   issuerRef:
     name: cert-manager-webhook-selfsign
-  commonName: "another.cert"
+  commonName: "my.cert"

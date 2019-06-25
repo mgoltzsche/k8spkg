@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/mgoltzsche/k8spkg/pkg/model"
@@ -9,29 +10,43 @@ import (
 	"github.com/urfave/cli"
 )
 
-// TODO: look for dependent apiServices that were declared in previous packages
-// -> wait for those and all pods of these packages
-// -> treat all sources recursively as one package (required for kubectl apply --prune to work)
-// -> support optional dependency list (added before actual sources)
-//    and wait for required apiservices to become available
-//    (BUT DON'T INTRODUCE UNNECESSARY DEPENDENCIES to base services that may be provided by the infrastructure)
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	verbose := false
+	prune := false
+
 	app := cli.NewApp()
 	app.Name = "k8pkg"
+	app.Version = version
+	app.Usage = "A CLI to manage kubernetes API objects in packages"
 	app.Author = "Max Goltzsche"
+	app.EnableBashCompletion = true
+	cli.VersionPrinter = func(c *cli.Context) {
+		fmt.Printf("version: %s\ncommit: %s\ndate: %s\n", c.App.Version, commit, date)
+	}
+	app.Flags = []cli.Flag{
+		cli.BoolTFlag{
+			Name:        "debug, d",
+			Usage:       "Enable debug log",
+			Destination: &verbose,
+		},
+	}
 	app.Commands = []cli.Command{
 		{
 			Name:        "apply",
 			Description: "Applies the provided package(s) waiting for required apiServices to become available",
-			Usage:       "k8spkg apply [--prune] SOURCE...",
+			Usage:       "Applies a package",
+			UsageText:   "k8spkg apply [--prune] SOURCE...",
 			Flags: []cli.Flag{
 				cli.BoolTFlag{
-					Name:  "prune",
-					Usage: "Deletes all sources that belong to the provided package(s) but were not present within the input",
-				},
-				cli.BoolTFlag{
-					Name:  "all",
-					Usage: "Applies all dependencies as well",
+					Name:        "prune",
+					Usage:       "Deletes all sources that belong to the provided package(s) but were not present within the input",
+					Destination: &prune,
 				},
 			},
 			Action: func(c *cli.Context) (err error) {
@@ -40,13 +55,14 @@ func main() {
 					return
 				}
 				mngr := state.NewPackageManager()
-				return mngr.Apply(pkg)
+				return mngr.Apply(pkg, prune)
 			},
 		},
 		{
 			Name:        "delete",
 			Description: "Deletes the provided packages from the k8s cluster",
-			Usage:       "k8spkg delete PKG",
+			Usage:       "Deletes a package",
+			UsageText:   "k8spkg delete PKG",
 			Action: func(c *cli.Context) (err error) {
 				if c.NArg() != 1 {
 					return cli.NewExitError("no package to delete provided", 1)
@@ -58,7 +74,8 @@ func main() {
 		{
 			Name:        "state",
 			Description: "Returns the state of the provided package within the cluster",
-			Usage:       "k8spkg state PKG",
+			Usage:       "Prints a package's state within the cluster",
+			UsageText:   "k8spkg state PKG",
 			Action: func(c *cli.Context) (err error) {
 				if c.NArg() != 1 {
 					return cli.NewExitError("no package name provided", 1)
@@ -68,38 +85,20 @@ func main() {
 				if err != nil {
 					return
 				}
-				for _, o := range obj {
-					if err = o.WriteYaml(os.Stdout); err != nil {
-						return
-					}
-				}
-				return
+				return model.K8sPackage(obj).WriteYaml(os.Stdout)
 			},
 		},
 		{
 			Name:        "manifest",
 			Description: "Prints the merged and labeled manifest",
-			Usage:       "k8spkg manifest PKGNAME SOURCEURL",
+			Usage:       "Prints a rendered package manifest",
+			UsageText:   "k8spkg manifest SOURCE",
 			Action: func(c *cli.Context) (err error) {
 				pkg, err := loadPackage(c)
 				if err != nil {
 					return
 				}
-				return pkg.ToYaml(os.Stdout)
-			},
-		},
-		{
-			Name:  "fetch",
-			Usage: "Fetches all remote sources",
-			Action: func(c *cli.Context) (err error) {
-				panic("TODO: fetch remote files into package dir (a way to describe where sources files originate from, can be converted and updated - helm support?)")
-			},
-		},
-		{
-			Name:  "clean",
-			Usage: "Removes the download directory",
-			Action: func(c *cli.Context) (err error) {
-				panic("TODO: remove downloaded sources")
+				return pkg.WriteYaml(os.Stdout)
 			},
 		},
 	}
@@ -109,7 +108,7 @@ func main() {
 	}
 }
 
-func loadObjects(src string) (o []model.K8sObject, err error) {
+func loadObjects(src string) (o []*model.K8sObject, err error) {
 	baseDir, err := os.Getwd()
 	if err != nil {
 		return
@@ -117,10 +116,11 @@ func loadObjects(src string) (o []model.K8sObject, err error) {
 	return model.Objects(src, baseDir)
 }
 
-func loadPackage(c *cli.Context) (pkg *model.K8sPackage, err error) {
-	if c.NArg() != 2 {
-		return nil, cli.NewExitError("missing argument, required: PKGNAME SOURCEURL", 1)
+func loadPackage(c *cli.Context) (pkg model.K8sPackage, err error) {
+	if c.NArg() != 1 {
+		return nil, cli.NewExitError("missing SOURCE argument", 1)
 	}
-	o, err := loadObjects(c.Args()[1])
-	return model.NewK8sPackage(c.Args()[0], o), err
+	// TODO: provide source as options (as in kubectl apply -f -r -k)
+	o, err := loadObjects(c.Args()[0])
+	return model.K8sPackage(o), err
 }

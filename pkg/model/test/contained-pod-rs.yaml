@@ -1,0 +1,193 @@
+---
+apiVersion: extensions/v1beta1
+kind: ReplicaSet
+metadata:
+    annotations:
+        deployment.kubernetes.io/desired-replicas: "1"
+        deployment.kubernetes.io/max-replicas: "2"
+        deployment.kubernetes.io/revision: "1"
+    creationTimestamp: "2019-06-24T23:20:59Z"
+    generation: 1
+    labels:
+        app: webhook
+        app.kubernetes.io/part-of: somepkg
+        pod-template-hash: 7444b58c45
+        release: cert-manager
+    name: cert-manager-webhook-7444b58c45
+    namespace: cert-manager
+    ownerReferences:
+      - apiVersion: apps/v1
+        blockOwnerDeletion: true
+        controller: true
+        kind: Deployment
+        name: cert-manager-webhook
+        uid: b99471c0-96d6-11e9-bafd-0242a54f69f8
+    resourceVersion: "15232"
+    selfLink: /apis/extensions/v1beta1/namespaces/cert-manager/replicasets/cert-manager-webhook-7444b58c45
+    uid: b995637f-96d6-11e9-bafd-0242a54f69f8
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: webhook
+            app.kubernetes.io/part-of: somepkg
+            pod-template-hash: 7444b58c45
+            release: cert-manager
+    template:
+        metadata:
+            creationTimestamp: null
+            labels:
+                app: webhook
+                app.kubernetes.io/part-of: cert-manager
+                pod-template-hash: 7444b58c45
+                release: cert-manager
+        spec:
+            containers:
+              - args:
+                  - --v=12
+                  - --secure-port=6443
+                  - --tls-cert-file=/certs/tls.crt
+                  - --tls-private-key-file=/certs/tls.key
+                env:
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                        fieldRef:
+                            apiVersion: v1
+                            fieldPath: metadata.namespace
+                image: quay.io/jetstack/cert-manager-webhook:v0.7.2
+                imagePullPolicy: IfNotPresent
+                name: webhook
+                resources: {}
+                terminationMessagePath: /dev/termination-log
+                terminationMessagePolicy: File
+                volumeMounts:
+                  - mountPath: /certs
+                    name: certs
+            dnsPolicy: ClusterFirst
+            restartPolicy: Always
+            schedulerName: default-scheduler
+            securityContext: {}
+            serviceAccount: cert-manager-webhook
+            serviceAccountName: cert-manager-webhook
+            terminationGracePeriodSeconds: 30
+            volumes:
+              - name: certs
+                secret:
+                    defaultMode: 420
+                    secretName: cert-manager-webhook-webhook-tls
+status:
+    availableReplicas: 1
+    fullyLabeledReplicas: 1
+    observedGeneration: 1
+    readyReplicas: 1
+    replicas: 1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    creationTimestamp: "2019-06-24T23:20:59Z"
+    generateName: cert-manager-webhook-7444b58c45-
+    labels:
+        app: webhook
+        app.kubernetes.io/part-of: somepkg
+        pod-template-hash: 7444b58c45
+        release: cert-manager
+    name: cert-manager-webhook-7444b58c45-9cfgh
+    namespace: cert-manager
+    ownerReferences:
+      - apiVersion: apps/v1
+        blockOwnerDeletion: true
+        controller: true
+        kind: ReplicaSet
+        name: cert-manager-webhook-7444b58c45
+        uid: b995637f-96d6-11e9-bafd-0242a54f69f8
+    resourceVersion: "15230"
+    selfLink: /api/v1/namespaces/cert-manager/pods/cert-manager-webhook-7444b58c45-9cfgh
+    uid: b9968f58-96d6-11e9-bafd-0242a54f69f8
+spec:
+    containers:
+      - args:
+          - --v=12
+          - --secure-port=6443
+          - --tls-cert-file=/certs/tls.crt
+          - --tls-private-key-file=/certs/tls.key
+        env:
+          - name: POD_NAMESPACE
+            valueFrom:
+                fieldRef:
+                    apiVersion: v1
+                    fieldPath: metadata.namespace
+        image: quay.io/jetstack/cert-manager-webhook:v0.7.2
+        imagePullPolicy: IfNotPresent
+        name: webhook
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+          - mountPath: /certs
+            name: certs
+          - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+            name: cert-manager-webhook-token-wgq49
+            readOnly: true
+    dnsPolicy: ClusterFirst
+    enableServiceLinks: true
+    nodeName: kube-node
+    priority: 0
+    restartPolicy: Always
+    schedulerName: default-scheduler
+    securityContext: {}
+    serviceAccount: cert-manager-webhook
+    serviceAccountName: cert-manager-webhook
+    terminationGracePeriodSeconds: 30
+    tolerations:
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+        tolerationSeconds: 300
+      - effect: NoExecute
+        key: node.kubernetes.io/unreachable
+        operator: Exists
+        tolerationSeconds: 300
+    volumes:
+      - name: certs
+        secret:
+            defaultMode: 420
+            secretName: cert-manager-webhook-webhook-tls
+      - name: cert-manager-webhook-token-wgq49
+        secret:
+            defaultMode: 420
+            secretName: cert-manager-webhook-token-wgq49
+status:
+    conditions:
+      - lastProbeTime: null
+        lastTransitionTime: "2019-06-24T23:20:59Z"
+        status: "True"
+        type: Initialized
+      - lastProbeTime: null
+        lastTransitionTime: "2019-06-24T23:21:36Z"
+        status: "True"
+        type: Ready
+      - lastProbeTime: null
+        lastTransitionTime: "2019-06-24T23:21:36Z"
+        status: "True"
+        type: ContainersReady
+      - lastProbeTime: null
+        lastTransitionTime: "2019-06-24T23:20:59Z"
+        status: "True"
+        type: PodScheduled
+    containerStatuses:
+      - containerID: docker://a8d428b505c9cb1bb14851344a74578b3b4c2519430570ea205ca0fa38fadf55
+        image: quay.io/jetstack/cert-manager-webhook:v0.7.2
+        imageID: docker-pullable://quay.io/jetstack/cert-manager-webhook@sha256:d1a6322825259deadb0fc8e0e06710be3c321736e05fb7aeb575fb336f953674
+        lastState: {}
+        name: webhook
+        ready: true
+        restartCount: 0
+        state:
+            running:
+                startedAt: "2019-06-24T23:21:35Z"
+    hostIP: 10.23.0.3
+    phase: Running
+    podIP: 10.40.0.3
+    qosClass: BestEffort
+    startTime: "2019-06-24T23:20:59Z"

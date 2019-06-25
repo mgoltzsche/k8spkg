@@ -43,8 +43,7 @@ func loadApiResourceTypeNames(namespacedOnly bool) (typeNames []string, err erro
 	c := exec.Command("kubectl", "api-resources", "--verbs", "delete", "--namespaced="+strconv.FormatBool(namespacedOnly), "-o", "name")
 	c.Stdout = &stdout
 	c.Stderr = &stderr
-	err = c.Run()
-	if err != nil {
+	if err = c.Run(); err != nil {
 		err = errors.Errorf("%+v: %s, stderr: %s", c.Args, err, strings.TrimSuffix(stderr.String(), "\n"))
 	} else {
 		typeNames = strings.Split(stdout.String(), "\n")

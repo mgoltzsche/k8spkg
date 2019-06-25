@@ -61,21 +61,28 @@ func mockKubectl() (err error) {
 	}
 
 	// Mock logic
-	var f *os.File
+	var f, fc *os.File
 	switch strings.Join(os.Args[1:], " ") {
 	case "get " + resTypesStr + " --all-namespaces -l app.kubernetes.io/part-of=somepkg -o yaml":
 		if f, err = os.Open("../model/test/k8sobjectlist.yaml"); err == nil {
 			defer f.Close()
 			_, err = io.Copy(os.Stdout, f)
+			// TODO: ensure contained pods and replicasets are not deleted implicitly but waited for their deletion
+			if err == nil {
+				if fc, err = os.Open("../model/test/contained-pod-rs.yaml"); err == nil {
+					defer fc.Close()
+					_, err = io.Copy(os.Stdout, fc)
+				}
+			}
 		}
-	case "apply --wait=true --prune -f - -l app.kubernetes.io/part-of=testpkg":
+	case kubectlApplyCall:
 		if f, err = os.OpenFile(os.Getenv("K8SPKGTEST_STDIN"), os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 			defer f.Close()
 			_, err = io.Copy(f, os.Stdin)
 		}
-	case resTypeCallNamespaced:
+	case kubectlResTypeCallNamespaced:
 		fmt.Println(strings.Join(resTypesNamespaced, "\n"))
-	case resTypeCallCluster:
+	case kubectlResTypeCallCluster:
 		fmt.Println(strings.Join(resTypesCluster, "\n"))
 	}
 	return

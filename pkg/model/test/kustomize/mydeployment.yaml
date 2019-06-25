@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Deployment
+metadata:
+  creationTimestamp: "2019-06-02T00:57:37Z"
+  labels:
+    hardcodedLabel: hardcodedValue
+  name: mydeployment
+  namespace: mynamespace
+spec:
+  containers:
+  - args:
+    - echo hello world
+    image: alpine:3.9
+    name: hellopod

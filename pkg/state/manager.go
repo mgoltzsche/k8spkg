@@ -19,13 +19,7 @@ func NewPackageManager() *PackageManager {
 	return &PackageManager{&ApiResourceTypes{}}
 }
 
-func (m *PackageManager) State(pkgName string) (objects []model.K8sObject, err error) {
-	// TODO: get all api-resources: kubectl api-resources -o name --verbs delete [--namespaced]
-	// get all resources: kubectl get deploy,pod,... --all-namespaces -l app.kubernetes.io/part-of=cert-manager -o yaml
-	// deletion order:
-	// - crd resources
-	// - namespaced resources
-	// - global resources
+func (m *PackageManager) State(pkgName string) (objects []*model.K8sObject, err error) {
 	resourceTypes, err := m.resourceTypes.All()
 	if err != nil {
 		return
@@ -57,49 +51,65 @@ func (m *PackageManager) State(pkgName string) (objects []model.K8sObject, err e
 	return
 }
 
-func (m *PackageManager) Apply(pkg *model.K8sPackage) (err error) {
-	log := logrus.WithField("pkg", pkg.Name)
-	log.Infof("Applying package")
-	for _, o := range pkg.Objects {
-		m := o.Metadata()
-		// Sets k8s's part-of and managed-by labels.
-		m.Labels["app.kubernetes.io/managed-by"] = "k8spkg"
-		m.Labels[model.PKG_LABEL] = pkg.Name
-		o.SetMetadata(m)
+func (m *PackageManager) Apply(objects []*model.K8sObject, prune bool) (err error) {
+	// TODO: store source URL as commonLabel as well and provide an option to
+	//       require source equality to do a k8s object update to make
+	//       sure nobody accidentally deletes k8s objects when reusing an existing package name
+	pkgName, err := packageName(objects)
+	if err != nil {
+		return
 	}
-	reader, errc := manifestReader(pkg.Objects)
-	pkgLabel := model.PKG_LABEL + "=" + pkg.Name
-	args := []string{"apply", "--wait=true", "--prune", "-f", "-", "-l", pkgLabel}
-	c := exec.Command("kubectl", args...)
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	c.Stdin = reader
-	log.Debugf("Running %+v", c.Args)
-	err = c.Run()
+	log := logrus.WithField("pkg", pkgName)
+	log.Infof("Applying package %s", pkgName)
+	reader, errc := manifestReader(objects)
+	pkgLabel := model.PKG_LABEL + "=" + pkgName
+	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-", "-l", pkgLabel}
+	if prune {
+		args = append(args, "--prune")
+	}
+	err = runKubectl(log, reader, args)
 	reader.Close()
 	if e := <-errc; e != nil && err == nil {
 		err = e
 	}
 	if err == nil {
-		if err = m.AwaitRollout(pkg); err == nil {
-			err = m.AwaitAvailability(pkg)
+		if err = m.awaitRollout(objects, log); err == nil {
+			err = m.awaitAvailability(objects, log)
 		}
 	}
-	return errors.Wrapf(err, "apply package %q", pkg.Name)
+	return errors.Wrapf(err, "apply package %s", pkgName)
 }
 
-func (m *PackageManager) AwaitRollout(pkg *model.K8sPackage) (err error) {
-	log := logrus.WithField("pkg", pkg.Name)
-	for _, o := range pkg.Objects {
-		kind := o.Kind()
+func packageName(objects []*model.K8sObject) (pkgName string, err error) {
+	if len(objects) == 0 {
+		return "", errors.New("no objects provided")
+	}
+	for _, o := range objects {
+		// Sets k8s's part-of and managed-by labels.
+		//m.Labels["app.kubernetes.io/managed-by"] = "k8spkg"
+		packageName := o.Labels()[model.PKG_LABEL]
+		if packageName == "" {
+			return "", errors.Errorf("%s/%s declares no package name label %s", o.Kind, o.Name, model.PKG_LABEL)
+		}
+		if pkgName == "" {
+			pkgName = packageName
+		} else if pkgName != packageName {
+			return "", errors.Errorf("more than one package referenced within the provided objects: %s, %s", pkgName, packageName)
+		}
+	}
+	return
+}
+
+func (m *PackageManager) awaitRollout(objects []*model.K8sObject, log *logrus.Entry) (err error) {
+	for _, o := range objects {
+		kind := o.Kind
 		if kind == "Deployment" || kind == "DaemonSet" || kind == "StatefulSet" {
-			meta := o.Metadata()
 			args := []string{"rollout", "status", "-w", "--timeout=2m"}
-			if meta.Namespace != "" {
-				args = append(args, "-n", meta.Namespace)
+			if o.Namespace != "" {
+				args = append(args, "-n", o.Namespace)
 			}
-			args = append(args, strings.ToLower(kind)+"/"+meta.Name)
-			if err = runKubectl(log, args); err != nil {
+			args = append(args, strings.ToLower(kind)+"/"+o.Name)
+			if err = runKubectl(log, nil, args); err != nil {
 				return
 			}
 		}
@@ -107,10 +117,9 @@ func (m *PackageManager) AwaitRollout(pkg *model.K8sPackage) (err error) {
 	return
 }
 
-func (m *PackageManager) AwaitAvailability(pkg *model.K8sPackage) (err error) {
-	log := logrus.WithField("pkg", pkg.Name)
-	obj := filter(k8sitems(pkg.Objects), func(o *k8sitem) bool {
-		return o.kind == "Deployment" || o.kind == "APIService" // TODO: add more
+func (m *PackageManager) awaitAvailability(objects []*model.K8sObject, log *logrus.Entry) (err error) {
+	obj := filter(objects, func(o *model.K8sObject) bool {
+		return o.Kind == "Deployment" || o.Kind == "APIService" // TODO: add more
 	})
 	if len(obj) == 0 {
 		return nil
@@ -119,7 +128,7 @@ func (m *PackageManager) AwaitAvailability(pkg *model.K8sPackage) (err error) {
 	return kubectlWait(log, obj, "condition=available")
 }
 
-func kubectlWait(log *logrus.Entry, obj []*k8sitem, forExpr string) (err error) {
+func kubectlWait(log *logrus.Entry, obj []*model.K8sObject, forExpr string) (err error) {
 	nsMap, nsOrder := groupByNamespace(obj)
 	for _, ns := range nsOrder {
 		if e := kubectlWaitNames(log, ns, names(nsMap[ns]), forExpr); e != nil {
@@ -137,13 +146,13 @@ func kubectlWaitNames(log *logrus.Entry, ns string, names []string, forExpr stri
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	if e := runKubectl(log, append(args, names...)); e != nil && err == nil {
+	if e := runKubectl(log, nil, append(args, names...)); e != nil && err == nil {
 		err = e
 	}
 	return
 }
 
-func filter(obj []*k8sitem, filter func(*k8sitem) bool) (filtered []*k8sitem) {
+func filter(obj []*model.K8sObject, filter func(*model.K8sObject) bool) (filtered []*model.K8sObject) {
 	for _, o := range obj {
 		if filter(o) {
 			filtered = append(filtered, o)
@@ -152,37 +161,18 @@ func filter(obj []*k8sitem, filter func(*k8sitem) bool) (filtered []*k8sitem) {
 	return
 }
 
-func groupByNamespace(obj []*k8sitem) (nsMap map[string][]*k8sitem, nsOrder []string) {
-	nsMap = map[string][]*k8sitem{}
+func groupByNamespace(obj []*model.K8sObject) (nsMap map[string][]*model.K8sObject, nsOrder []string) {
+	nsMap = map[string][]*model.K8sObject{}
 	nsOrder = []string{}
 	for _, o := range obj {
-		l := nsMap[o.ns]
+		l := nsMap[o.Namespace]
 		if l == nil {
-			nsOrder = append(nsOrder, o.ns)
+			nsOrder = append(nsOrder, o.Namespace)
 		}
-		nsMap[o.ns] = append(l, o)
+		nsMap[o.Namespace] = append(l, o)
 	}
 	return
 }
-
-/*func (m *PackageManager) Delete(pkg *model.K8sPackage) (err error) {
-	if pkg.Name == "" {
-		return errors.New("no package name provided")
-	}
-	log := logrus.WithField("pkg", pkg.Name)
-	log.Infof("Deleting package %q", pkg.Name)
-	// Delete objects contained within merged manifest yaml
-	err = m.deleteObjects(log, pkg.Objects)
-
-	// Delete objects belonging to another package version with the same name
-	err2 := m.DeleteName(log, pkg.Name)
-	if err2 == nil {
-		err = nil
-	} else {
-		err = err2
-	}
-	return errors.Wrapf(err, "delete package %q", pkg.Name)
-}*/
 
 func (m *PackageManager) clearResourceTypeCache() {
 	m.resourceTypes = &ApiResourceTypes{}
@@ -190,7 +180,7 @@ func (m *PackageManager) clearResourceTypeCache() {
 
 func (m *PackageManager) Delete(pkgName string) (err error) {
 	log := logrus.WithField("pkg", pkgName)
-	o, err := m.State(pkgName) // TODO: make sure all resources are returned (currently only deploy, service)
+	o, err := m.State(pkgName)
 	if err != nil {
 		return
 	}
@@ -199,9 +189,8 @@ func (m *PackageManager) Delete(pkgName string) (err error) {
 		return nil
 	}
 
-	obj := k8sitems(o)
 	m.clearResourceTypeCache()
-	err = m.deleteObjects(log, obj)
+	err = m.deleteObjects(log, o)
 	if err != nil {
 		// Workaround to exit successfully in case `kubectl wait` did not find an already deleted resource.
 		// This should be solved within kubectl so that it does not exit with an error when waiting for deletion of a deleted resource.
@@ -209,45 +198,25 @@ func (m *PackageManager) Delete(pkgName string) (err error) {
 			if len(o) == 0 {
 				err = nil
 			} else {
-				err = errors.Errorf("leftover resources: %s", strings.Join(names(obj), ", "))
+				err = errors.Errorf("leftover resources: %s", strings.Join(names(o), ", "))
 			}
 		}
 	}
-	return errors.Wrapf(err, "delete package %q", pkgName)
+	return errors.Wrapf(err, "delete package %s", pkgName)
 }
 
-type k8sitem struct {
-	fqn        string
-	apiVersion string
-	ns         string
-	kind       string
-	name       string
-	obj        model.K8sObject
-}
-
-func k8sitems(obj []model.K8sObject) (l []*k8sitem) {
-	l = make([]*k8sitem, len(obj))
-	for i, o := range obj {
-		m := o.Metadata()
-		l[i] = &k8sitem{fqn(o), o.ApiVersion(), m.Namespace, o.Kind(), m.Name, o}
-	}
-	return
-}
-
-func (m *PackageManager) deleteObjects(log *logrus.Entry, obj []*k8sitem) (err error) {
-	// TODO: wait for pod deletion reliably (add commonLabel with kustomize that is applied to pods within a deployment as well)
-	// TODO: maybe don't delete pods if they are owned by a deployment but wait for pods to be deleted after the deployment has been deleted
+func (m *PackageManager) deleteObjects(log *logrus.Entry, obj []*model.K8sObject) (err error) {
 	fqnMap := map[string]bool{}
-	crds := filter(obj, func(o *k8sitem) bool { return o.kind == "CustomResourceDefinition" })
+	crds := filter(obj, func(o *model.K8sObject) bool { return o.Kind == "CustomResourceDefinition" })
 	mapFqns(crds, fqnMap)
 	crdMap := crdGvkMap(crds)
-	crdRes := filter(obj, func(o *k8sitem) bool { return crdMap[o.apiVersion+"/"+o.kind] })
+	crdRes := filter(obj, func(o *model.K8sObject) bool { return crdMap[o.Gvk()] })
 	mapFqns(crdRes, fqnMap)
-	namespaced := filter(obj, func(o *k8sitem) bool { return !fqnMap[o.fqn] && o.ns != "" })
+	namespaced := filter(obj, func(o *model.K8sObject) bool { return !fqnMap[o.ID()] && o.Namespace != "" })
 	mapFqns(namespaced, fqnMap)
-	other := filter(obj, func(o *k8sitem) bool { return !fqnMap[o.fqn] })
+	other := filter(obj, func(o *model.K8sObject) bool { return !fqnMap[o.ID()] })
 
-	deletionOrder := [][]*k8sitem{
+	deletionOrder := [][]*model.K8sObject{
 		crdRes,
 		namespaced,
 		other,
@@ -256,9 +225,9 @@ func (m *PackageManager) deleteObjects(log *logrus.Entry, obj []*k8sitem) (err e
 
 	for _, items := range deletionOrder {
 		nsMap, nsOrder := groupByNamespace(items)
-		// Delete namespaced resources
 		for _, ns := range nsOrder {
-			if e := deleteObjectNames(log, ns, names(nsMap[ns])); e != nil && err == nil {
+			nonContained := filter(nsMap[ns], isNoContainedObject)
+			if e := deleteObjectNames(log, ns, names(nonContained)); e != nil && err == nil {
 				err = e
 			}
 		}
@@ -281,80 +250,36 @@ func deleteObjectNames(log *logrus.Entry, ns string, names []string) (err error)
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	return runKubectl(log, append(args, names...))
+	return runKubectl(log, nil, append(args, names...))
 }
 
-func crdGvkMap(crds []*k8sitem) (m map[string]bool) {
+func isNoContainedObject(o *model.K8sObject) bool {
+	return len(o.OwnerReferences()) == 0
+}
+
+func crdGvkMap(crds []*model.K8sObject) (m map[string]bool) {
 	m = map[string]bool{}
 	for _, o := range crds {
-		group := o.obj.GetString("spec.group")
-		version := o.obj.GetString("spec.version")
-		kind := o.obj.GetString("spec.names.kind")
-		m[group+"/"+version+"/"+kind] = true
+		m[o.CrdGvk()] = true
 	}
 	return
 }
 
-func mapFqns(obj []*k8sitem, fqns map[string]bool) {
+func mapFqns(obj []*model.K8sObject, fqns map[string]bool) {
 	for _, o := range obj {
-		fqns[o.fqn] = true
+		fqns[o.ID()] = true
 	}
 }
 
-func fqn(o model.K8sObject) string {
-	m := o.Metadata()
-	return m.Namespace + "/" + o.ApiVersion() + "/" + o.Kind() + "/" + m.Name
-}
-
-func names(obj []*k8sitem) (names []string) {
+func names(obj []*model.K8sObject) (names []string) {
 	names = make([]string, len(obj))
 	for i, o := range obj {
-		names[i] = strings.ToLower(o.kind) + "/" + o.name
+		names[i] = strings.ToLower(o.Kind) + "/" + o.Name
 	}
 	return
 }
 
-/*
-// IsLessThan returns true if self is less than the argument.
-func (x Gvk) IsLessThan(o Gvk) bool {
-	indexI := typeOrders[x.Kind]
-	indexJ := typeOrders[o.Kind]
-	if indexI != indexJ {
-		return indexI < indexJ
-	}
-	return x.String() < o.String()
-}
-
-func sortPackages(obj []model.K8sObject) {
-	sort.Sli
-}*/
-
-/*func (m *PackageManager) awaitDeletion(log *logrus.Entry, obj []model.K8sObject) (err error) {
-	// TODO: make sure all objects are deleted
-	nsMap, nsOrder := groupByNamespace(obj, func(obj model.K8sObject) bool {
-		return true
-	})
-	if len(nsOrder) > 0 {
-		log.Info("Waiting for resource deletion...")
-	}
-	for _, ns := range nsOrder {
-		waitArgs := []string{"wait", "--for", "delete", "--timeout=2m"}
-		if ns != "" {
-			waitArgs = append(waitArgs, "-n", ns)
-		}
-		for _, o := range nsMap[ns] {
-			m := o.Metadata()
-			kind := strings.ToLower(o.Kind())
-			waitArgs = append(waitArgs, kind+"/"+m.Name)
-		}
-		if e := runKubectl(log, waitArgs...); e != nil && err == nil {
-			err = errors.New("failed waiting for all resources to be deleted")
-		}
-	}
-	return
-}*/
-
-func manifestReader(objects []model.K8sObject) (io.ReadCloser, chan error) {
+func manifestReader(objects []*model.K8sObject) (io.ReadCloser, chan error) {
 	reader, writer := io.Pipe()
 	errc := make(chan error)
 	go func() {
@@ -370,10 +295,11 @@ func manifestReader(objects []model.K8sObject) (io.ReadCloser, chan error) {
 	return reader, errc
 }
 
-func runKubectl(log *logrus.Entry, args []string) (err error) {
+func runKubectl(log *logrus.Entry, stdin io.Reader, args []string) (err error) {
 	c := exec.Command("kubectl", args...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
+	c.Stdin = stdin
 	log.Debugf("Running %+v", c.Args)
 	err = c.Run()
 	return errors.Wrapf(err, "%+v", c.Args)
