@@ -1,16 +1,13 @@
 # k8spkg
 
-An experimental command line tool to manage Kubernetes manifests and
+An experimental command line tool to (un)deploy Kubernetes manifests and
 overcome current kubectl limitations.
 
 ## Features
 
-- Wait for required ApiServices and Deployments to become available before applying dependent objects.  
-  _(for instance to deploy cert-manager and custom issuers/certs)_
-- Add common package label to API objecfs.  
-  _(to ease deployment state inspection and support `kubectl apply -f - --prune -l app.kubernetes.io/part-of=<PKG>`)_
-- Delete API objects by package name.  
-  _(`kubectl delete -l app.kubernetes.io/part-of=<PKG>`)_
+- Rollout a manifest waiting for the contained APIServices and Deployments to become available.
+- Add common label to a manifest's API objects to identify them as package (using [kustomize](https://github.com/kubernetes-sigs/kustomize)).
+- Delete API objects by package name waiting for them to be deleted.
 
 ## Requirements
 
@@ -33,7 +30,7 @@ k8spkg manifest --name cert-manager -f https://raw.githubusercontent.com/jetstac
 <YAML output>
 ```
 
-Install `cert-manager`:
+Label and install `cert-manager`:
 ```
 k8spkg apply --name cert-manager -f https://raw.githubusercontent.com/jetstack/cert-manager/release-0.7/deploy/manifests/cert-manager.yaml &&
 k8spkg apply --name cert-manager-ca-issuer -f ca-issuer.yaml
@@ -44,7 +41,7 @@ Delete `cert-manager`:
 k8spkg delete cert-manager
 ```
 
-Deploy kustomize package:
+Label and deploy a kustomize package:
 ```
 k8spkg apply --name exampleapp -k github.com/kubernetes-sigs/kustomize//examples/helloWorld?ref=v2.1.0
 ```
