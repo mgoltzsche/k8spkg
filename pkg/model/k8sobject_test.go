@@ -32,7 +32,7 @@ spec:
 	obj := map[string]interface{}{}
 	err := yaml.Unmarshal([]byte(manifest), obj)
 	require.NoError(t, err)
-	o := NewK8sObject(obj)
+	o := FromMap(obj)
 	assert.Equal(t, "certmanager.k8s.io/v1alpha1", o.APIVersion, "apiVersion")
 	assert.Equal(t, "Issuer", o.Kind, "kind")
 	assert.Equal(t, "ca-issuer", o.Name, "name")
@@ -52,7 +52,7 @@ func TestK8sObjectFromReader(t *testing.T) {
 	f, err := os.Open("test/k8sobjectlist.yaml")
 	require.NoError(t, err)
 	defer f.Close()
-	ol, err := K8sObjectsFromReader(f)
+	ol, err := FromReader(f)
 	require.NoError(t, err)
 	names := []string{}
 	for _, o := range ol {

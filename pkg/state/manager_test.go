@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"io/ioutil"
 	"testing"
 
@@ -17,7 +18,7 @@ const (
 func TestPackageManagerApply(t *testing.T) {
 	b, err := ioutil.ReadFile("../model/test/k8sobjectlist.yaml")
 	require.NoError(t, err)
-	obj, err := model.K8sObjectsFromReader(bytes.NewReader(b))
+	obj, err := model.FromReader(bytes.NewReader(b))
 	require.NoError(t, err)
 
 	// Assert Apply()
@@ -32,11 +33,11 @@ func TestPackageManagerApply(t *testing.T) {
 	}
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(stdinFile string) {
 		testee := &PackageManager{}
-		err = testee.Apply(obj, true)
+		err = testee.Apply(context.Background(), obj, true)
 		require.NoError(t, err, "Apply()")
 
 		// Assert applied content is complete
-		expected, err := model.K8sObjectsFromReader(bytes.NewReader(b))
+		expected, err := model.FromReader(bytes.NewReader(b))
 		require.NoError(t, err)
 		var expectedYaml bytes.Buffer
 		for _, o := range expected {
@@ -51,7 +52,7 @@ func TestPackageManagerApply(t *testing.T) {
 	expectedCalls = []string{"apply --wait=true --timeout=2m -f - -l app.kubernetes.io/part-of=somepkg"}
 	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
 		testee := NewPackageManager()
-		err := testee.Apply(obj, false)
+		err := testee.Apply(context.Background(), obj, false)
 		require.Error(t, err, "Apply() should pass through kubectl error")
 	})
 }
@@ -65,19 +66,19 @@ func TestPackageManagerState(t *testing.T) {
 	// with kubectl success
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
 		testee := NewPackageManager()
-		objects, err := testee.State("somepkg")
+		objects, err := testee.State(context.Background(), "somepkg")
 		require.NoError(t, err)
 		assert.Equal(t, 8, len(objects), "amount of loaded objects")
 	})
 	// with kubectl error
 	assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
 		testee := NewPackageManager()
-		_, err := testee.State("somepkg")
+		_, err := testee.State(context.Background(), "somepkg")
 		assert.Error(t, err)
 	})
 	assertKubectlCalls(t, expectedCalls, 2, func(_ string) {
 		testee := NewPackageManager()
-		_, err := testee.State("somepkg")
+		_, err := testee.State(context.Background(), "somepkg")
 		assert.Error(t, err)
 	})
 }
@@ -101,21 +102,21 @@ func TestPackageManagerDelete(t *testing.T) {
 	// successful deletion
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
 		testee := NewPackageManager()
-		assert.NoError(t, testee.Delete("somepkg"), "should delete successfully")
+		assert.NoError(t, testee.Delete(context.Background(), "somepkg"), "should delete successfully")
 	})
 	// kubectl error on state retrieval should fail
 	assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
 		testee := NewPackageManager()
-		require.Error(t, testee.Delete("somepkg"), "should fail when resource type retrieval fails")
+		require.Error(t, testee.Delete(context.Background(), "somepkg"), "should fail when resource type retrieval fails")
 	})
 	assertKubectlCalls(t, expectedCalls[:3], 2, func(_ string) {
 		testee := NewPackageManager()
-		require.Error(t, testee.Delete("somepkg"), "should fail when cluster state retrieval fails")
+		require.Error(t, testee.Delete(context.Background(), "somepkg"), "should fail when cluster state retrieval fails")
 	})
-	// kubectl error during deletion should still delete other resources
-	/*expectedCalls = append(expectedCalls, resTypeCallCluster, resTypeCallNamespaced, expectedCalls[2])
+	// kubectl error during deletion should still attempt to delete other resources
+	expectedCalls = append(expectedCalls, expectedCalls[0])
 	assertKubectlCalls(t, expectedCalls, 3, func(_ string) {
 		testee := NewPackageManager()
-		require.Error(t, testee.Delete("somepkg"))
-	})*/
+		require.Error(t, testee.Delete(context.Background(), "somepkg"))
+	})
 }

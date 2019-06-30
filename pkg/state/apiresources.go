@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 type ApiResourceTypes struct {
@@ -43,8 +44,9 @@ func loadApiResourceTypeNames(namespacedOnly bool) (typeNames []string, err erro
 	c := exec.Command("kubectl", "api-resources", "--verbs", "delete", "--namespaced="+strconv.FormatBool(namespacedOnly), "-o", "name")
 	c.Stdout = &stdout
 	c.Stderr = &stderr
+	logrus.Debugf("Running %+v", c.Args)
 	if err = c.Run(); err != nil {
-		err = errors.Errorf("%+v: %s, stderr: %s", c.Args, err, strings.TrimSuffix(stderr.String(), "\n"))
+		err = errors.Errorf("%+v: %s. %s", c.Args, err, strings.TrimSuffix(stderr.String(), "\n"))
 	} else {
 		typeNames = strings.Split(stdout.String(), "\n")
 		typeNames = typeNames[:len(typeNames)-1]

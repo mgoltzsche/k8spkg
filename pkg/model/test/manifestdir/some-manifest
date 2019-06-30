@@ -1,0 +1,9 @@
+apiVersion: someapi/v1
+kind: SomeKind
+metadata:
+  name: some-object
+spec:
+  secretName: someobj
+  duration: 7000h
+  issuerRef:
+    name: cert-manager-webhook-selfsign

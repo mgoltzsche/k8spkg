@@ -6,6 +6,7 @@ COMMIT_ID=$(shell git rev-parse HEAD)
 COMMIT_TAG=$(shell git describe --exact-match ${COMMIT_ID} || echo -n "dev")
 COMMIT_DATE=$(shell git show -s --format=%ci ${COMMIT_ID})
 LDFLAGS=-X main.commit=${COMMIT_ID} -X main.version=${COMMIT_TAG} -X "main.date=${COMMIT_DATE}"
+BUILDTAGS?=
 
 CGO_ENABLED=1
 GOIMAGE=k8spkg-golang
@@ -29,7 +30,7 @@ k8spkg: golang-image
 	$(DOCKERRUN) \
 		-e GOOS=linux \
 		-e CGO_ENABLED=0 \
-		$(GOIMAGE) go build -a -ldflags '-extldflags "-static" $(LDFLAGS)' .
+		$(GOIMAGE) go build -a -ldflags '-s -w -extldflags "-static" $(LDFLAGS)' -tags '$(BUILDTAGS)' .
 
 test: golang-image
 	$(DOCKERRUN) \

@@ -1,0 +1,11 @@
+---
+apiVersion: certmanager.k8s.io/v1alpha1
+kind: Certificate
+metadata:
+  name: some-excluded
+  namespace: cert-manager
+spec:
+  secretName: someexcl
+  duration: 7000h
+  issuerRef:
+    name: cert-manager-webhook-selfsign

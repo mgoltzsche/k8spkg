@@ -1,6 +1,8 @@
 package state
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -11,6 +13,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// See https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
+	PKG_LABEL = "app.kubernetes.io/part-of"
+)
+
 type PackageManager struct {
 	resourceTypes *ApiResourceTypes
 }
@@ -19,7 +26,7 @@ func NewPackageManager() *PackageManager {
 	return &PackageManager{&ApiResourceTypes{}}
 }
 
-func (m *PackageManager) State(pkgName string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) State(ctx context.Context, pkgName string) (objects []*model.K8sObject, err error) {
 	resourceTypes, err := m.resourceTypes.All()
 	if err != nil {
 		return
@@ -35,23 +42,26 @@ func (m *PackageManager) State(pkgName string) (objects []*model.K8sObject, err 
 	errc := make(chan error)
 	go func() {
 		var e error
-		objects, e = model.K8sObjectsFromReader(reader)
+		objects, e = model.FromReader(reader)
 		errc <- e
 		writer.CloseWithError(e)
 	}()
-	c := exec.Command("kubectl", "get", types, "--all-namespaces", "-l", model.PKG_LABEL+"="+pkgName, "-o", "yaml")
+	c := newKubectlCmd(ctx)
 	c.Stdout = writer
 	c.Stderr = os.Stderr
-	err = c.Run()
+	query := PKG_LABEL
+	if pkgName != "" {
+		query += "=" + pkgName
+	}
+	err = c.Run("get", types, "--all-namespaces", "-l", query, "-o", "yaml")
 	writer.Close()
 	if e := <-errc; e != nil && err == nil {
 		err = e
 	}
-	err = errors.WithMessagef(err, "%+v", c.Args)
 	return
 }
 
-func (m *PackageManager) Apply(objects []*model.K8sObject, prune bool) (err error) {
+func (m *PackageManager) Apply(ctx context.Context, objects []*model.K8sObject, prune bool) (err error) {
 	// TODO: store source URL as commonLabel as well and provide an option to
 	//       require source equality to do a k8s object update to make
 	//       sure nobody accidentally deletes k8s objects when reusing an existing package name
@@ -59,22 +69,23 @@ func (m *PackageManager) Apply(objects []*model.K8sObject, prune bool) (err erro
 	if err != nil {
 		return
 	}
-	log := logrus.WithField("pkg", pkgName)
-	log.Infof("Applying package %s", pkgName)
+	logrus.Infof("Applying package %s", pkgName)
 	reader, errc := manifestReader(objects)
-	pkgLabel := model.PKG_LABEL + "=" + pkgName
+	pkgLabel := PKG_LABEL + "=" + pkgName
 	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-", "-l", pkgLabel}
 	if prune {
 		args = append(args, "--prune")
 	}
-	err = runKubectl(log, reader, args)
+	cmd := newKubectlCmd(ctx)
+	cmd.Stdin = reader
+	err = cmd.Run(args...)
 	reader.Close()
 	if e := <-errc; e != nil && err == nil {
 		err = e
 	}
 	if err == nil {
-		if err = m.awaitRollout(objects, log); err == nil {
-			err = m.awaitAvailability(objects, log)
+		if err = m.awaitRollout(ctx, objects); err == nil {
+			err = m.awaitAvailability(ctx, objects)
 		}
 	}
 	return errors.Wrapf(err, "apply package %s", pkgName)
@@ -87,9 +98,9 @@ func packageName(objects []*model.K8sObject) (pkgName string, err error) {
 	for _, o := range objects {
 		// Sets k8s's part-of and managed-by labels.
 		//m.Labels["app.kubernetes.io/managed-by"] = "k8spkg"
-		packageName := o.Labels()[model.PKG_LABEL]
+		packageName := o.Labels()[PKG_LABEL]
 		if packageName == "" {
-			return "", errors.Errorf("%s/%s declares no package name label %s", o.Kind, o.Name, model.PKG_LABEL)
+			return "", errors.Errorf("%s/%s declares no package name label %s", o.Kind, o.Name, PKG_LABEL)
 		}
 		if pkgName == "" {
 			pkgName = packageName
@@ -100,45 +111,56 @@ func packageName(objects []*model.K8sObject) (pkgName string, err error) {
 	return
 }
 
-func (m *PackageManager) awaitRollout(objects []*model.K8sObject, log *logrus.Entry) (err error) {
-	for _, o := range objects {
-		kind := o.Kind
-		if kind == "Deployment" || kind == "DaemonSet" || kind == "StatefulSet" {
-			args := []string{"rollout", "status", "-w", "--timeout=2m"}
-			if o.Namespace != "" {
-				args = append(args, "-n", o.Namespace)
-			}
-			args = append(args, strings.ToLower(kind)+"/"+o.Name)
-			if err = runKubectl(log, nil, args); err != nil {
-				return
-			}
+func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObject) (err error) {
+	obj = filter(obj, func(o *model.K8sObject) bool {
+		return o.Kind == "Deployment" || o.Kind == "DaemonSet" || o.Kind == "StatefulSet"
+	})
+	for _, o := range obj {
+		args := []string{"rollout", "status", "-w", "--timeout=2m"}
+		if o.Namespace != "" {
+			args = append(args, "-n", o.Namespace)
+		}
+		args = append(args, strings.ToLower(o.Kind)+"/"+o.Name)
+
+		if err = newKubectlCmd(ctx).Run(args...); err != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 	}
 	return
 }
 
-func (m *PackageManager) awaitAvailability(objects []*model.K8sObject, log *logrus.Entry) (err error) {
-	obj := filter(objects, func(o *model.K8sObject) bool {
+func (m *PackageManager) awaitAvailability(ctx context.Context, obj []*model.K8sObject) (err error) {
+	obj = filter(obj, func(o *model.K8sObject) bool {
 		return o.Kind == "Deployment" || o.Kind == "APIService" // TODO: add more
 	})
 	if len(obj) == 0 {
 		return nil
 	}
-	log.Infof("Waiting for %d components to become available...", len(obj))
-	return kubectlWait(log, obj, "condition=available")
+	logrus.Debugf("Waiting for %d components to become available...", len(obj))
+	return kubectlWait(newKubectlCmd(ctx), obj, "condition=available")
 }
 
-func kubectlWait(log *logrus.Entry, obj []*model.K8sObject, forExpr string) (err error) {
+func kubectlWait(cmd *kubectlCmd, obj []*model.K8sObject, forExpr string) (err error) {
 	nsMap, nsOrder := groupByNamespace(obj)
 	for _, ns := range nsOrder {
-		if e := kubectlWaitNames(log, ns, names(nsMap[ns]), forExpr); e != nil {
+		if e := kubectlWaitNames(cmd, ns, names(nsMap[ns]), forExpr); e != nil {
 			err = e
+		}
+		select {
+		case <-cmd.ctx.Done():
+			return cmd.ctx.Err()
+		default:
 		}
 	}
 	return
 }
 
-func kubectlWaitNames(log *logrus.Entry, ns string, names []string, forExpr string) (err error) {
+func kubectlWaitNames(cmd *kubectlCmd, ns string, names []string, forExpr string) (err error) {
 	if len(names) == 0 {
 		return
 	}
@@ -146,7 +168,7 @@ func kubectlWaitNames(log *logrus.Entry, ns string, names []string, forExpr stri
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	if e := runKubectl(log, nil, append(args, names...)); e != nil && err == nil {
+	if e := cmd.Run(append(args, names...)...); e != nil && err == nil {
 		err = e
 	}
 	return
@@ -178,23 +200,18 @@ func (m *PackageManager) clearResourceTypeCache() {
 	m.resourceTypes = &ApiResourceTypes{}
 }
 
-func (m *PackageManager) Delete(pkgName string) (err error) {
-	log := logrus.WithField("pkg", pkgName)
-	o, err := m.State(pkgName)
+func (m *PackageManager) Delete(ctx context.Context, pkgName string) (err error) {
+	o, err := m.State(ctx, pkgName)
 	if err != nil {
 		return
 	}
 	if len(o) == 0 {
-		log.Warn("Package not found")
-		return nil
+		return errors.Errorf("no API object from package %q found within the cluster", pkgName)
 	}
-
-	m.clearResourceTypeCache()
-	err = m.deleteObjects(log, o)
-	if err != nil {
+	if err = m.DeleteObjects(ctx, o); err != nil {
 		// Workaround to exit successfully in case `kubectl wait` did not find an already deleted resource.
 		// This should be solved within kubectl so that it does not exit with an error when waiting for deletion of a deleted resource.
-		if o, e := m.State(pkgName); e == nil {
+		if o, e := m.State(ctx, pkgName); e == nil {
 			if len(o) == 0 {
 				err = nil
 			} else {
@@ -205,7 +222,8 @@ func (m *PackageManager) Delete(pkgName string) (err error) {
 	return errors.Wrapf(err, "delete package %s", pkgName)
 }
 
-func (m *PackageManager) deleteObjects(log *logrus.Entry, obj []*model.K8sObject) (err error) {
+func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObject) (err error) {
+	defer m.clearResourceTypeCache()
 	fqnMap := map[string]bool{}
 	crds := filter(obj, func(o *model.K8sObject) bool { return o.Kind == "CustomResourceDefinition" })
 	mapFqns(crds, fqnMap)
@@ -227,22 +245,43 @@ func (m *PackageManager) deleteObjects(log *logrus.Entry, obj []*model.K8sObject
 		nsMap, nsOrder := groupByNamespace(items)
 		for _, ns := range nsOrder {
 			nonContained := filter(nsMap[ns], isNoContainedObject)
-			if e := deleteObjectNames(log, ns, names(nonContained)); e != nil && err == nil {
+			if e := deleteObjectNames(ctx, ns, names(nonContained)); e != nil && err == nil {
 				err = e
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
 		}
 		for _, ns := range nsOrder {
-			if e := kubectlWaitNames(log, ns, names(nsMap[ns]), "delete"); e != nil && err == nil {
-				err = waitError(e)
+			cmd := newKubectlCmd(ctx)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if e := kubectlWaitNames(cmd, ns, names(nsMap[ns]), "delete"); e != nil && err == nil {
+				msg := e.Error()
+				sout := stdout.String()
+				serr := stderr.String()
+				if sout != "" {
+					msg += ", stdout: " + sout
+				}
+				if serr != "" {
+					msg += ", stderr: " + serr
+				}
+				err = errors.New(msg)
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
 		}
 	}
 	return
 }
 
-type waitError error
-
-func deleteObjectNames(log *logrus.Entry, ns string, names []string) (err error) {
+func deleteObjectNames(ctx context.Context, ns string, names []string) (err error) {
 	if len(names) == 0 {
 		return
 	}
@@ -250,7 +289,7 @@ func deleteObjectNames(log *logrus.Entry, ns string, names []string) (err error)
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	return runKubectl(log, nil, append(args, names...))
+	return newKubectlCmd(ctx).Run(append(args, names...)...)
 }
 
 func isNoContainedObject(o *model.K8sObject) bool {
@@ -295,12 +334,26 @@ func manifestReader(objects []*model.K8sObject) (io.ReadCloser, chan error) {
 	return reader, errc
 }
 
-func runKubectl(log *logrus.Entry, stdin io.Reader, args []string) (err error) {
-	c := exec.Command("kubectl", args...)
-	c.Stdout = os.Stdout
-	c.Stderr = os.Stderr
-	c.Stdin = stdin
-	log.Debugf("Running %+v", c.Args)
-	err = c.Run()
-	return errors.Wrapf(err, "%+v", c.Args)
+type kubectlCmd struct {
+	ctx    context.Context
+	Stdout io.Writer
+	Stderr io.Writer
+	Stdin  io.Reader
+}
+
+func newKubectlCmd(ctx context.Context) *kubectlCmd {
+	return &kubectlCmd{
+		ctx:    ctx,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	}
+}
+
+func (c *kubectlCmd) Run(args ...string) (err error) {
+	cmd := exec.CommandContext(c.ctx, "kubectl", args...)
+	cmd.Stdout = c.Stdout
+	cmd.Stderr = c.Stderr
+	cmd.Stdin = c.Stdin
+	logrus.Debugf("Running %+v", cmd.Args)
+	return errors.Wrapf(cmd.Run(), "%+v", cmd.Args)
 }

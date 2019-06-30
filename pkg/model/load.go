@@ -1,131 +1,121 @@
 package model
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 
 	"github.com/hashicorp/go-getter"
+	urlhelper "github.com/hashicorp/go-getter/helper/url"
 	"github.com/pkg/errors"
 )
 
-// TODO: maybe remove since kustomize should always be used to load sources
-
-func Objects(src, baseDir string) (o []*K8sObject, err error) {
-	if len(baseDir) == 0 {
-		if baseDir, err = os.Getwd(); err != nil {
-			return
-		}
-	}
-	file, tmp, err := loadSource(src, baseDir)
-	if err != nil {
-		return
-	}
-	if tmp {
-		defer os.RemoveAll(file)
-	}
-	err = collectObjects(file, &o)
-	return o, errors.Wrapf(err, "source %s", src)
+func ManifestReader(ctx context.Context, src, baseDir string) (reader io.Reader) {
+	reader, writer := io.Pipe()
+	go func() {
+		writer.CloseWithError(copySourceFiles(ctx, src, baseDir, writer))
+	}()
+	return
 }
 
-func loadSource(src, baseDir string) (file string, remote bool, err error) {
-	var dtctd string
-	if dtctd, err = getter.Detect(src, baseDir, getter.Detectors); err != nil {
+func copySourceFiles(ctx context.Context, src, baseDir string, writer io.Writer) (err error) {
+	dSrc, err := getter.Detect(src, baseDir, getter.Detectors)
+	if err != nil {
 		return
 	}
 	var u *url.URL
-	u, err = url.Parse(dtctd)
+	u, err = urlhelper.Parse(dSrc)
 	if err != nil {
 		return
 	}
-	path := u.Path
+	file := u.Path
 	if u.RawPath != "" {
-		path = u.RawPath
+		file = u.RawPath
 	}
-	if u.Scheme == "file" {
-		file = path
-	} else {
-		if file, err = ioutil.TempDir("", "k8spkg-"+filepath.Base(path)+"-"); err != nil {
+	if u.Scheme != "file" {
+		g := getter.Getters[u.Scheme]
+		if g == nil {
+			return errors.Errorf("no getter mapped for URL scheme %q", u.Scheme)
+		}
+		var mode getter.ClientMode
+		if mode, err = g.ClientMode(u); err != nil {
 			return
 		}
+		if file, err = ioutil.TempDir("", "k8spkg-"); err != nil {
+			return
+		}
+		defer os.RemoveAll(file)
 		os.RemoveAll(file)
-		remote = true
-		err = getter.GetAny(file, dtctd)
-		err = errors.Wrapf(err, "source %s", src)
+		c := &getter.Client{
+			Dst:  file,
+			Src:  dSrc,
+			Ctx:  ctx,
+			Mode: mode,
+		}
+		if err = c.Get(); err != nil {
+			return
+		}
+	}
+	err = copyFiles(ctx, file, writer)
+	return errors.Wrapf(err, "source %s", src)
+}
+
+func withContext(ctx context.Context) func(*getter.Client) error {
+	return func(c *getter.Client) error {
+		c.Ctx = ctx
+		return nil
+	}
+}
+
+func copyFiles(ctx context.Context, file string, writer io.Writer) (err error) {
+	si, err := os.Stat(file)
+	if err == nil {
+		if si.IsDir() {
+			err = copyManifestDir(ctx, file, writer)
+		} else {
+			err = copyManifestFile(file, writer)
+		}
 	}
 	return
 }
 
-func collectObjects(file string, obj *[]*K8sObject) (err error) {
-	si, err := os.Stat(file)
-	if err != nil {
-		return
-	}
-	collectFn := manifest2objects
-	if si.IsDir() {
-		collectFn = manifests2objects
-		kustomizeFile := filepath.Join(file, "kustomization.yaml")
-		if _, e := os.Stat(kustomizeFile); e == nil {
-			collectFn = kustomize2objects
+func copyManifestDir(ctx context.Context, dir string, writer io.Writer) (err error) {
+	var files []string
+	extensions := []string{".yaml", ".yml", ".json"}
+	for _, fext := range extensions {
+		matches, e := filepath.Glob(filepath.Join(dir, "*"+fext))
+		if e != nil {
+			return e
 		}
-	}
-	return collectFn(file, obj)
-}
-
-func manifests2objects(dir string, obj *[]*K8sObject) (err error) {
-	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
-	if err != nil {
-		return
+		files = append(files, matches...)
 	}
 	if len(files) == 0 {
-		return errors.Errorf("no yaml files contained within dir %s", dir)
+		return errors.Errorf("no manifest files found within dir %s, recognized file extensions are %+v", dir, extensions)
 	}
 	sort.Strings(files)
 	for _, file := range files {
-		if err = manifest2objects(file, obj); err != nil {
+		writer.Write([]byte("\n---\n"))
+		if err = copyManifestFile(file, writer); err != nil {
 			return
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 	}
 	return nil
 }
 
-func manifest2objects(file string, obj *[]*K8sObject) (err error) {
+func copyManifestFile(file string, writer io.Writer) (err error) {
 	f, err := os.Open(file)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	o, err := K8sObjectsFromReader(f)
-	*obj = append(*obj, o...)
-	return
-}
-
-func kustomize2objects(dir string, obj *[]*K8sObject) (err error) {
-	reader, writer := io.Pipe()
-	defer func() {
-		if e := reader.Close(); e != nil && err == nil {
-			err = e
-		}
-		err = errors.Wrap(err, "render kustomization.yaml")
-	}()
-	errc := make(chan error)
-	go func() {
-		o, e := K8sObjectsFromReader(reader)
-		*obj = append(*obj, o...)
-		errc <- e
-		writer.CloseWithError(e)
-	}()
-	c := exec.Command("kubectl", "kustomize", dir)
-	c.Stdout = writer
-	c.Stderr = os.Stderr
-	err = c.Run()
-	writer.Close()
-	if e := <-errc; e != nil && err == nil {
-		err = e
+	if err == nil {
+		defer f.Close()
+		_, err = io.Copy(writer, f)
 	}
 	return
 }

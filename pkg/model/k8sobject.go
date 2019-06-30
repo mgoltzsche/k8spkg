@@ -9,15 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	// See https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
-	PKG_LABEL = "app.kubernetes.io/part-of"
-)
-
 type K8sPackage []*K8sObject
 
-func (pkg K8sPackage) WriteYaml(writer io.Writer) (err error) {
-	for _, o := range pkg {
+func WriteManifest(obj []*K8sObject, writer io.Writer) (err error) {
+	for _, o := range obj {
 		if err = o.WriteYaml(writer); err != nil {
 			return
 		}
@@ -25,30 +20,28 @@ func (pkg K8sPackage) WriteYaml(writer io.Writer) (err error) {
 	return
 }
 
+type rawK8sObject map[string]interface{}
+
 type K8sObject struct {
-	rawK8sObject
+	raw        rawK8sObject
 	APIVersion string
-	Namespace  string
 	Kind       string
+	Namespace  string
 	Name       string
 }
 
-type rawK8sObject map[string]interface{}
-
-func NewK8sObject(o map[string]interface{}) *K8sObject {
+func FromMap(o map[string]interface{}) *K8sObject {
 	m := asMap(o["metadata"])
 	return &K8sObject{
-		rawK8sObject: rawK8sObject(o),
-		APIVersion:   asString(o["apiVersion"]),
-		Kind:         asString(o["kind"]),
-		Namespace:    asString(m["namespace"]),
-		Name:         asString(m["name"]),
+		raw:        o,
+		APIVersion: asString(o["apiVersion"]),
+		Kind:       asString(o["kind"]),
+		Namespace:  asString(m["namespace"]),
+		Name:       asString(m["name"]),
 	}
 }
 
-//type RawK8sObject map[string]interface{}
-
-func K8sObjectsFromReader(f io.Reader) (obj []*K8sObject, err error) {
+func FromReader(f io.Reader) (obj []*K8sObject, err error) {
 	dec := yaml.NewDecoder(f)
 	o := map[string]interface{}{}
 	for ; err == nil; err = dec.Decode(o) {
@@ -65,9 +58,18 @@ func K8sObjectsFromReader(f io.Reader) (obj []*K8sObject, err error) {
 	return
 }
 
+func (o *K8sObject) Validate() (err error) {
+	if o.APIVersion == "" || o.Kind == "" || o.Name == "" {
+		err = errors.Errorf("invalid API object: apiVersion, kind or name are not set: %+v", o.raw)
+	}
+	return
+}
+
 func appendFlattened(o rawK8sObject, flattened *[]*K8sObject) (err error) {
 	if o["kind"] != "List" {
-		*flattened = append(*flattened, NewK8sObject(o))
+		entry := FromMap(o)
+		err = entry.Validate()
+		*flattened = append(*flattened, entry)
 		return
 	}
 	ol, err := items(o)
@@ -81,7 +83,7 @@ func appendFlattened(o rawK8sObject, flattened *[]*K8sObject) (err error) {
 	return
 }
 
-// Returns child objects in case kind=List
+// Returns 'items' slice
 func items(o rawK8sObject) (items []rawK8sObject, err error) {
 	rawItems := asList(o["items"])
 	if rawItems == nil {
@@ -104,7 +106,7 @@ func (o *K8sObject) Gvk() string {
 
 func (o *K8sObject) Labels() (l map[string]string) {
 	l = map[string]string{}
-	for k, v := range asMap(asMap(o.rawK8sObject["metadata"])["labels"]) {
+	for k, v := range asMap(asMap(o.raw["metadata"])["labels"]) {
 		l[k] = asString(v)
 	}
 	return
@@ -125,7 +127,7 @@ type OwnerReference struct {
 }
 
 func (o *K8sObject) OwnerReferences() (r []*OwnerReference) {
-	for _, ref := range asList(lookup(o.rawK8sObject, "metadata.ownerReferences")) {
+	for _, ref := range asList(lookup(o.raw, "metadata.ownerReferences")) {
 		r = append(r, &OwnerReference{
 			APIVersion: asString(asMap(ref)["apiVersion"]),
 			Kind:       asString(asMap(ref)["kind"]),
@@ -138,7 +140,7 @@ func (o *K8sObject) OwnerReferences() (r []*OwnerReference) {
 
 func (o *K8sObject) WriteYaml(writer io.Writer) (err error) {
 	if _, err = writer.Write([]byte("---\n")); err == nil {
-		err = yaml.NewEncoder(writer).Encode(o.rawK8sObject)
+		err = yaml.NewEncoder(writer).Encode(o.raw)
 	}
 	return errors.Wrapf(err, "encode k8sobject %s/%s to yaml", o.Kind, o.Name)
 }
@@ -157,7 +159,7 @@ func lookup(o map[string]interface{}, path string) (r interface{}) {
 }
 
 func (o *K8sObject) getString(path string) string {
-	return asString(lookup(o.rawK8sObject, path))
+	return asString(lookup(o.raw, path))
 }
 
 func asList(o interface{}) []interface{} {
