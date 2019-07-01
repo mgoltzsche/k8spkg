@@ -27,12 +27,14 @@ export GODOCKERFILE
 all: clean k8spkg
 
 k8spkg: golang-image
+	mkdir -p .build-cache
 	$(DOCKERRUN) \
 		-e GOOS=linux \
 		-e CGO_ENABLED=0 \
 		$(GOIMAGE) go build -a -ldflags '-s -w -extldflags "-static" $(LDFLAGS)' -tags '$(BUILDTAGS)' .
 
 test: golang-image
+	mkdir -p .build-cache
 	$(DOCKERRUN) \
 		-e GOOS=linux \
 		-e CGO_ENABLED=0 \
