@@ -1,0 +1,5 @@
+commonLabels:
+  app.kubernetes.io/part-of: withrootresource
+
+resources:
+  - /tmp/k8spkg-manifest-outside-root.yaml
