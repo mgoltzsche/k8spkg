@@ -14,6 +14,7 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Provides a reader for the given manifest dir or URL.
 func ManifestReader(ctx context.Context, src, baseDir string) (reader io.Reader) {
 	reader, writer := io.Pipe()
 	go func() {

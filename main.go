@@ -6,14 +6,14 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"sort"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/mgoltzsche/k8spkg/pkg/kustomize"
-	"github.com/mgoltzsche/k8spkg/pkg/labels"
 	"github.com/mgoltzsche/k8spkg/pkg/model"
-	"github.com/mgoltzsche/k8spkg/pkg/state"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -23,7 +23,7 @@ var (
 	version    = "dev"
 	commit     = "none"
 	date       = "unknown"
-	apiManager = state.NewPackageManager()
+	apiManager = k8spkg.NewPackageManager()
 )
 
 func main() {
@@ -79,14 +79,18 @@ func run(args []string, out io.Writer) error {
 		Name:  "name",
 		Usage: "Add package name label to all input objects",
 	}
+	namespaceFlag := cli.StringFlag{
+		Name:  "namespace, n",
+		Usage: "Add package name label to all input objects",
+	}
+	namedManifestFlags := append(manifestFlags, nameFlag, namespaceFlag)
 	app.Commands = []cli.Command{
 		{
 			Name:        "apply",
-			Description: "Installs or updates the provided source as package waiting for successful rollout",
+			Description: "Installs or updates the provided source as package and waits for the rollout to succeed",
 			Usage:       "Installs or updates a package",
-			UsageText:   "k8spkg apply [--name <PKG>] [--timeout <DURATION>] [--prune] {-f SRC|-k SRC}",
-			Flags: append(manifestFlags,
-				nameFlag,
+			UsageText:   "k8spkg apply [-n <NAMESPACE>] [--name <PKG>] [--timeout <DURATION>] [--prune] {-f SRC|-k SRC}",
+			Flags: append(namedManifestFlags,
 				cli.BoolTFlag{
 					Name:        "prune",
 					Usage:       "Deletes all sources that belong to the provided package but were not present within the input",
@@ -94,23 +98,19 @@ func run(args []string, out io.Writer) error {
 				}),
 			Action: func(c *cli.Context) (err error) {
 				ctx := newContext(timeout)
-				reader, err := sourceReader(ctx, inputOpts(c))
+				pkg, err := sourcePackage(ctx, inputOpts(c))
 				if err != nil {
 					return
 				}
-				obj, err := model.FromReader(reader)
-				if err != nil {
-					return
-				}
-				return apiManager.Apply(ctx, obj, prune)
+				return apiManager.Apply(ctx, pkg, prune)
 			},
 		},
 		{
 			Name:        "delete",
-			Description: "Deletes the provided packages from the k8s cluster",
+			Description: "Deletes the identified objects from the cluster and awaits their deletion",
 			Usage:       "Deletes a package",
-			UsageText:   "k8spkg delete [--timeout <DURATION>] {-f SRC|-k SRC|PKG}",
-			Flags:       manifestFlags,
+			UsageText:   "k8spkg delete [-n <NAMESPACE>] [--timeout <DURATION>] {-f SRC|-k SRC|PKG}",
+			Flags:       append(manifestFlags, namespaceFlag),
 			Action: func(c *cli.Context) (err error) {
 				if c.NArg() > 1 {
 					return cli.NewExitError("too many arguments provided", 1)
@@ -122,7 +122,7 @@ func run(args []string, out io.Writer) error {
 					if opts.option != "" {
 						return errors.Errorf("option -%s is not allowed when PACKAGE argument provided", opts.option)
 					}
-					return apiManager.Delete(ctx, c.Args()[0])
+					return apiManager.Delete(ctx, opts.Namespace, c.Args()[0])
 				}
 				// Delete provided objects
 				reader, err := sourceReader(ctx, opts)
@@ -141,30 +141,28 @@ func run(args []string, out io.Writer) error {
 			Name:        "list",
 			Description: "Lists the packages installed within the cluster",
 			Usage:       "Lists the packages installed within the cluster",
-			UsageText:   "k8spkg [--timeout <DURATION>] list",
-			Flags:       []cli.Flag{timeoutFlag},
+			UsageText:   "k8spkg [-n <NAMESPACE>] [--timeout <DURATION>] list",
+			Flags:       []cli.Flag{namespaceFlag, timeoutFlag},
 			Action: func(c *cli.Context) (err error) {
 				if c.NArg() != 0 {
 					return cli.NewExitError("no arguments supported", 1)
 				}
 				ctx := newContext(timeout)
-				objects, err := apiManager.State(ctx, "")
+				opts := inputOpts(c)
+				pkgs, err := apiManager.List(ctx, opts.Namespace)
 				if err != nil {
 					return
 				}
-				pkgs := map[string]bool{}
-				var pkgNames []string
-				for _, o := range objects {
-					if pkgName := o.Labels()[state.PKG_LABEL]; pkgName != "" {
-						if !pkgs[pkgName] {
-							pkgNames = append(pkgNames, pkgName)
-							pkgs[pkgName] = true
-						}
+				nameLen := 7
+				for _, pkg := range pkgs {
+					if len(pkg.Name) > nameLen {
+						nameLen = len(pkg.Name)
 					}
 				}
-				sort.Strings(pkgNames)
-				for _, pkgName := range pkgNames {
-					fmt.Println(pkgName)
+				lineFmt := "%-" + strconv.Itoa(nameLen) + "s    %s\n"
+				fmt.Printf(lineFmt, "PACKAGE", "NAMESPACES")
+				for _, pkg := range pkgs {
+					fmt.Printf(lineFmt, pkg.Name, strings.Join(pkg.Namespaces, ","))
 				}
 				return
 			},
@@ -173,15 +171,15 @@ func run(args []string, out io.Writer) error {
 			Name:        "manifest",
 			Description: "Prints the merged and labeled manifest",
 			Usage:       "Prints a rendered package manifest",
-			UsageText:   "k8spkg manifest [--name <PKG>] [--timeout <DURATION>] {-f SRC|-k SRC|PKG}",
-			Flags:       append(manifestFlags, nameFlag),
+			UsageText:   "k8spkg manifest [-n <NAMESPACE>] [--name <PKG>] [--timeout <DURATION>] {-f SRC|-k SRC|PKG}",
+			Flags:       namedManifestFlags,
 			Action: func(c *cli.Context) (err error) {
 				ctx := newContext(timeout)
-				obj, err := loadObjects(ctx, c)
+				pkg, err := lookupPackage(ctx, c)
 				if err != nil {
 					return
 				}
-				return model.WriteManifest(obj, out)
+				return model.WriteManifest(pkg.Objects, out)
 			},
 		},
 	}
@@ -189,9 +187,10 @@ func run(args []string, out io.Writer) error {
 }
 
 type inputOptions struct {
-	option string
-	source string
-	name   string
+	option    string
+	source    string
+	Name      string
+	Namespace string
 }
 
 func inputOpts(c *cli.Context) (o inputOptions) {
@@ -204,7 +203,8 @@ func inputOpts(c *cli.Context) (o inputOptions) {
 		o.option += "k"
 		o.source = c.String("k")
 	}
-	o.name = c.String("name")
+	o.Name = c.String("name")
+	o.Namespace = c.String("namespace")
 	return
 }
 
@@ -223,7 +223,7 @@ func newContext(timeout time.Duration) context.Context {
 	return ctx
 }
 
-func loadObjects(ctx context.Context, c *cli.Context) (obj []*model.K8sObject, err error) {
+func lookupPackage(ctx context.Context, c *cli.Context) (pkg *k8spkg.K8sPackage, err error) {
 	if c.NArg() > 1 {
 		return nil, cli.NewExitError("too many arguments provided", 1)
 	}
@@ -236,55 +236,39 @@ func loadObjects(ctx context.Context, c *cli.Context) (obj []*model.K8sObject, e
 		if opts.option != "" {
 			return nil, errors.Errorf("package name and -%s option are exclusive but both provided", opts.option)
 		}
-		obj, err = apiManager.State(ctx, c.Args()[0])
+		pkg, err = apiManager.State(ctx, opts.Namespace, c.Args()[0])
 	} else {
 		// Load manifest from provided source
-		var reader io.Reader
-		if reader, err = sourceReader(ctx, opts); err != nil {
-			return
-		}
-		obj, err = model.FromReader(reader)
-	}
-	if err == nil && len(obj) == 0 {
-		err = errors.New("no objects contained")
+		pkg, err = sourcePackage(ctx, opts)
 	}
 	return
 }
 
-func sourceReader(ctx context.Context, opt inputOptions) (reader io.Reader, err error) {
-	valid := func() (err error) {
-		if opt.source == "" {
-			err = errors.Errorf("empty value provided to option -%s", opt.option)
-		}
-		return
+func sourcePackage(ctx context.Context, opt inputOptions) (pkg *k8spkg.K8sPackage, err error) {
+	reader, err := sourceReader(ctx, opt)
+	if err == nil {
+		pkg, err = k8spkg.PkgFromManifest(reader, opt.Namespace, opt.Name)
 	}
+	return
+}
+
+func sourceReader(ctx context.Context, opt inputOptions) (io.Reader, error) {
+	var readerFn func(context.Context, string) (io.Reader, error)
 	switch opt.option {
 	case "k":
-		if err = valid(); err == nil {
-			reader = renderKustomize(opt.source)
-		}
+		readerFn = renderKustomize
 	case "f":
-		if opt.source == "-" {
-			reader = os.Stdin
-		} else {
-			var baseDir string
-			if baseDir, err = os.Getwd(); err != nil {
-				return
-			}
-			if err = valid(); err == nil {
-				reader = model.ManifestReader(ctx, opt.source, baseDir)
-			}
-		}
+		readerFn = fileReader
 	default:
-		err = errors.New("exactly one of -f or -k must be provided")
+		return nil, errors.New("exactly one of -f or -k must be provided")
 	}
-	if err == nil && opt.name != "" {
-		reader = setPackageName(reader, opt.name)
+	if opt.source == "" {
+		return nil, errors.Errorf("empty value provided to option -%s", opt.option)
 	}
-	return
+	return readerFn(ctx, opt.source)
 }
 
-func renderKustomize(source string) io.Reader {
+func renderKustomize(ctx context.Context, source string) (reader io.Reader, err error) {
 	reader, writer := io.Pipe()
 	go func() {
 		err := kustomize.Render(kustomize.RenderOptions{
@@ -293,14 +277,18 @@ func renderKustomize(source string) io.Reader {
 		})
 		writer.CloseWithError(err)
 	}()
-	return reader
+	return reader, nil
 }
 
-func setPackageName(reader io.Reader, pkgName string) io.Reader {
-	labeledReader, writer := io.Pipe()
-	go func() {
-		labelMap := map[string]string{state.PKG_LABEL: pkgName}
-		writer.CloseWithError(labels.AddLabels(reader, labelMap, writer))
-	}()
-	return labeledReader
+func fileReader(ctx context.Context, source string) (reader io.Reader, err error) {
+	if source == "-" { // read stdin
+		reader = os.Stdin
+	} else { // read file/dir
+		var baseDir string
+		if baseDir, err = os.Getwd(); err != nil {
+			return
+		}
+		reader = model.ManifestReader(ctx, source, baseDir)
+	}
+	return
 }

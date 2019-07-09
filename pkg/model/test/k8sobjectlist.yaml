@@ -8,6 +8,7 @@ items:
     name: certificates.certmanager.k8s.io
     labels:
       app.kubernetes.io/part-of: somepkg
+      k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
   # ...
   spec:
     group: certmanager.k8s.io

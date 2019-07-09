@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/mgoltzsche/k8spkg/pkg/model"
-	"github.com/mgoltzsche/k8spkg/pkg/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,6 @@ func TestManifest(t *testing.T) {
 		{"withname", 8, []string{"manifest", "-f", "pkg/model/test", "--name", "withname"}},
 		{"kustomizedpkg", 2, []string{"manifest", "-k", "pkg/model/test/kustomize"}},
 		{"remoteFile", 2, []string{"manifest", "-f", "http://" + addr + "/pkg/model/test/manifestdir/some-cert.yaml", "--name", "remoteFile"}},
-		{"", 2, []string{"manifest", "-f", "http://" + addr + "/pkg/model/test/manifestdir/some-cert.yaml"}},
 	} {
 		out := testRun(t, c.args)
 		obj, err := model.FromReader(bytes.NewReader(out))
@@ -34,7 +33,7 @@ func TestManifest(t *testing.T) {
 		require.Equal(t, c.expectedCount, len(obj), "%s object count", c.expectedPkgName)
 		pkgName := ""
 		for _, o := range obj {
-			if pkgName = o.Labels()[state.PKG_LABEL]; pkgName != c.expectedPkgName {
+			if pkgName = o.Labels()[k8spkg.PKG_NAME_LABEL]; pkgName != c.expectedPkgName {
 				break
 			}
 		}

@@ -1,0 +1,5 @@
+commonLabels:
+  app.kubernetes.io/part-of: malformedpkg2
+
+resources:
+  - github.com/mgoltzsche/k8spkg/pkg/kustomize/test/path-breach

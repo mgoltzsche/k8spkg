@@ -1,4 +1,5 @@
 **/downloads/
-k8spkg
+/k8spkg
+coverage.out
 .liteide-cache
 .build-cache

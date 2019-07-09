@@ -38,7 +38,7 @@ test: golang-image
 	$(DOCKERRUN) \
 		-e GOOS=linux \
 		-e CGO_ENABLED=0 \
-		$(GOIMAGE) go test -v ./...
+		$(GOIMAGE) go test -v -coverprofile coverage.out -cover ./...
 
 golang-image:
 	echo "$$GODOCKERFILE" | docker build --force-rm -t $(GOIMAGE) -

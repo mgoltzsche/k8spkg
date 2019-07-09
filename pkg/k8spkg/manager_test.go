@@ -1,4 +1,4 @@
-package state
+package k8spkg
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ func TestPackageManagerApply(t *testing.T) {
 	require.NoError(t, err)
 	obj, err := model.FromReader(bytes.NewReader(b))
 	require.NoError(t, err)
+	pkg := &K8sPackage{&PackageInfo{Name: "somepkg"}, obj}
 
 	// Assert Apply()
 	expectedCalls := []string{
@@ -33,7 +34,7 @@ func TestPackageManagerApply(t *testing.T) {
 	}
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(stdinFile string) {
 		testee := &PackageManager{}
-		err = testee.Apply(context.Background(), obj, true)
+		err = testee.Apply(context.Background(), pkg, true)
 		require.NoError(t, err, "Apply()")
 
 		// Assert applied content is complete
@@ -49,45 +50,63 @@ func TestPackageManagerApply(t *testing.T) {
 	})
 
 	// Assert prune option and kubectl error are passed through
-	expectedCalls = []string{"apply --wait=true --timeout=2m -f - -l app.kubernetes.io/part-of=somepkg"}
+	expectedCalls = []string{"apply --wait=true --timeout=2m -f -"}
 	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
 		testee := NewPackageManager()
-		err := testee.Apply(context.Background(), obj, false)
+		err := testee.Apply(context.Background(), pkg, false)
 		require.Error(t, err, "Apply() should pass through kubectl error")
 	})
 }
 
+var testNamespace = "myns"
+var kubectlGetCall = "get " + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml -n " + testNamespace
+var kubectlGetCallNsCertManager = "get " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml -n cert-manager"
+var kubectlGetCallNsMynamespace = "get " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml -n mynamespace"
+var kubectlGetCallNsEmpty = "get " + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml"
+
 func TestPackageManagerState(t *testing.T) {
 	expectedCalls := []string{
-		kubectlResTypeCallCluster,
-		kubectlResTypeCallNamespaced,
-		"get " + resTypesStr + " --all-namespaces -l app.kubernetes.io/part-of=somepkg -o yaml",
+		kubectlResTypeCall,
+		kubectlGetCall,
+		kubectlGetCallNsCertManager,
+		kubectlGetCallNsMynamespace,
 	}
 	// with kubectl success
-	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
-		testee := NewPackageManager()
-		objects, err := testee.State(context.Background(), "somepkg")
-		require.NoError(t, err)
-		assert.Equal(t, 8, len(objects), "amount of loaded objects")
-	})
+	assertns := func(ns string) func(string) {
+		return func(_ string) {
+			testee := NewPackageManager()
+			pkg, err := testee.State(context.Background(), ns, "somepkg")
+			require.NoError(t, err)
+			require.Equal(t, "somepkg", pkg.Name, "pkg name")
+			s := ""
+			for _, o := range pkg.Objects {
+				s += "\n  " + o.ID()
+			}
+			require.Equal(t, 8, len(pkg.Objects), "amount of loaded objects\nobjects: %s", s)
+		}
+	}
+	assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(testNamespace))
+	expectedCalls[1] = kubectlGetCallNsEmpty
+	assertKubectlCalls(t, expectedCalls[:3], 3, assertns(""))
 	// with kubectl error
 	assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
 		testee := NewPackageManager()
-		_, err := testee.State(context.Background(), "somepkg")
+		_, err := testee.State(context.Background(), "", "somepkg")
 		assert.Error(t, err)
 	})
-	assertKubectlCalls(t, expectedCalls, 2, func(_ string) {
+	/*assertKubectlCalls(t, expectedCalls[:2], 2, func(_ string) {
 		testee := NewPackageManager()
-		_, err := testee.State(context.Background(), "somepkg")
+		_, err := testee.State(context.Background(), "", "somepkg")
 		assert.Error(t, err)
-	})
+	})*/
 }
 
 func TestPackageManagerDelete(t *testing.T) {
 	expectedCalls := []string{
-		kubectlResTypeCallCluster,
-		kubectlResTypeCallNamespaced,
-		"get " + resTypesStr + " --all-namespaces -l app.kubernetes.io/part-of=somepkg -o yaml",
+		kubectlResTypeCall,
+		kubectlGetCall,
+		kubectlGetCallNsCertManager,
+		kubectlGetCallNsMynamespace,
 		"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n cert-manager certificate/onemorecert",
 		"wait --for delete --timeout=2m -n cert-manager certificate/onemorecert",
 		"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n mynamespace deployment/somedeployment deployment/mydeployment",
@@ -102,21 +121,25 @@ func TestPackageManagerDelete(t *testing.T) {
 	// successful deletion
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
 		testee := NewPackageManager()
-		assert.NoError(t, testee.Delete(context.Background(), "somepkg"), "should delete successfully")
+		require.NoError(t, testee.Delete(context.Background(), "myns", "somepkg"), "should delete successfully")
 	})
 	// kubectl error on state retrieval should fail
 	assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
 		testee := NewPackageManager()
-		require.Error(t, testee.Delete(context.Background(), "somepkg"), "should fail when resource type retrieval fails")
+		require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when resource type retrieval fails")
+	})
+	assertKubectlCalls(t, expectedCalls[:2], 1, func(_ string) {
+		testee := NewPackageManager()
+		require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when cluster state retrieval fails")
 	})
 	assertKubectlCalls(t, expectedCalls[:3], 2, func(_ string) {
 		testee := NewPackageManager()
-		require.Error(t, testee.Delete(context.Background(), "somepkg"), "should fail when cluster state retrieval fails")
+		require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when cluster state retrieval fails")
 	})
 	// kubectl error during deletion should still attempt to delete other resources
 	expectedCalls = append(expectedCalls, expectedCalls[0])
-	assertKubectlCalls(t, expectedCalls, 3, func(_ string) {
+	assertKubectlCalls(t, expectedCalls, 4, func(_ string) {
 		testee := NewPackageManager()
-		require.Error(t, testee.Delete(context.Background(), "somepkg"))
+		require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"))
 	})
 }

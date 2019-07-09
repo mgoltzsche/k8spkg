@@ -1,4 +1,4 @@
-package state
+package k8spkg
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	if os.Args[0] == "kubectl" {
+	if os.Getenv("K8SPKGTEST_CALLS") != "" {
 		if err := mockKubectl(); err != nil {
 			fmt.Fprintf(os.Stderr, "mock kubectl: %s\n", err)
 			os.Exit(1)
@@ -61,30 +61,32 @@ func mockKubectl() (err error) {
 	}
 
 	// Mock logic
-	var f, fc *os.File
 	switch strings.Join(os.Args[1:], " ") {
-	case "get " + resTypesStr + " --all-namespaces -l app.kubernetes.io/part-of=somepkg -o yaml":
-		if f, err = os.Open("../model/test/k8sobjectlist.yaml"); err == nil {
-			defer f.Close()
-			_, err = io.Copy(os.Stdout, f)
-			// TODO: ensure contained pods and replicasets are not deleted implicitly but waited for their deletion
-			if err == nil {
-				if fc, err = os.Open("../model/test/contained-pod-rs.yaml"); err == nil {
-					defer fc.Close()
-					_, err = io.Copy(os.Stdout, fc)
-				}
-			}
-		}
+	case kubectlGetCall:
+		err = printFile("../model/test/k8sobjectlist.yaml")
+		err = printFile("../model/test/contained-pod-rs.yaml")
+	case kubectlGetCallNsEmpty:
+		err = printFile("../model/test/k8sobjectlist.yaml")
+		err = printFile("../model/test/contained-pod-rs.yaml")
 	case kubectlApplyCall:
+		var f *os.File
 		if f, err = os.OpenFile(os.Getenv("K8SPKGTEST_STDIN"), os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 			defer f.Close()
 			_, err = io.Copy(f, os.Stdin)
 		}
-	case kubectlResTypeCallNamespaced:
-		fmt.Println(strings.Join(resTypesNamespaced, "\n"))
-	case kubectlResTypeCallCluster:
-		fmt.Println(strings.Join(resTypesCluster, "\n"))
+	case kubectlResTypeCall:
+		fmt.Print(resTypeTable)
 	}
+	return
+}
+
+func printFile(file string) (err error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, err = io.Copy(os.Stdout, f)
 	return
 }
 

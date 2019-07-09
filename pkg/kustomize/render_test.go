@@ -39,6 +39,41 @@ func TestRender(t *testing.T) {
 	str := buf.String()
 	pkgLabelPos := strings.Index(str, "  app.kubernetes.io/part-of: kustomizedpkg\n")
 	assert.True(t, pkgLabelPos > 0, "app.kubernetes.io/part-of label should be contained")
+
+	//
+	// Test reject resources outside root directory
+	//
+
+	fileOutsideRoot := "/tmp/k8spkg-manifest-outside-root.yaml"
+	tmpFile, err := os.OpenFile(fileOutsideRoot, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	require.NoError(t, err)
+	defer os.Remove(fileOutsideRoot)
+	f, err := os.Open(filepath.Join("test", "kustomizedpkg", "mycert.yaml"))
+	require.NoError(t, err)
+	_, err = io.Copy(tmpFile, f)
+	require.NoError(t, err)
+	tmpFile.Close()
+	err = Render(RenderOptions{
+		Source: "test/path-breach",
+		Out:    &buf,
+	})
+	require.Error(t, err, "Render() outside project root")
+	require.Contains(t, err.Error(), "security", "unexpected error message on path outside root directory: %s", err.Error())
+
+	err = Render(RenderOptions{
+		Source:       "test/path-breach",
+		Out:          &buf,
+		Unrestricted: true,
+	})
+	require.NoError(t, err, "Render() outside project root with RestrictRootDir=false")
+
+	err = Render(RenderOptions{
+		Source:       "test/uses-path-breach",
+		Out:          &buf,
+		Unrestricted: true,
+	})
+	require.Error(t, err, "Render() with transitive resource breaching root dir")
+	require.Contains(t, err.Error(), "security", "unexpected error message on path outside root directory: %s", err.Error())
 }
 
 func containedNames(rendered []map[string]interface{}) (names []string) {

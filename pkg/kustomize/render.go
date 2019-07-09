@@ -4,7 +4,7 @@ package kustomize
 
 import (
 	"sigs.k8s.io/kustomize/k8sdeps/kunstruct"
-	"sigs.k8s.io/kustomize/k8sdeps/transformer"
+	transformimpl "sigs.k8s.io/kustomize/k8sdeps/transformer"
 	"sigs.k8s.io/kustomize/k8sdeps/validator"
 	"sigs.k8s.io/kustomize/pkg/fs"
 	"sigs.k8s.io/kustomize/pkg/loader"
@@ -19,12 +19,13 @@ func Render(o RenderOptions) (err error) {
 	uf := kunstruct.NewKunstructuredFactoryImpl()
 	rf := resmap.NewFactory(resource.NewFactory(uf))
 	v := validator.NewKustValidator()
-	ptf := transformer.NewFactoryImpl()
-
-	pluginConfig := plugins.DefaultPluginConfig()
-	pl := plugins.NewLoader(pluginConfig, rf)
+	ptf := transformimpl.NewFactoryImpl()
+	pl := plugins.NewLoader(plugins.DefaultPluginConfig(), rf)
 
 	loadRestrictor := loader.RestrictionRootOnly
+	if o.Unrestricted {
+		loadRestrictor = loader.RestrictionNone
+	}
 	ldr, err := loader.NewLoader(loadRestrictor, v, o.Source, fSys)
 	if err != nil {
 		return
