@@ -29,7 +29,7 @@ like kubectl.
 | `manifest {-f SRC\|-k SRC} [--name <PKG>] [--namespace <NS>] [--timeout <DURATION>]` | Prints a merged and labeled manifest |
 | `apply {-f SRC\|-k SRC} [--name <PKG>] [--namespace <NS>] [--timeout <DURATION>] [--prune]` | Installs or updates the provided source as package and waits for the rollout to succeed. `--prune` deletes all API objects labeled with the package name that do not appear within the source from the cluster - should be used carefully. |
 | `delete {-f SRC\|-k SRC\|PKG} [--namespace <NS>] [--timeout <DURATION>]` | Deletes the identified objects from the cluster and awaits their deletion. A package's API objects in other namespaces that are referred to (label) within global API objects are deleted as well. |
-| `list [--namespace <NS>] [--timeout <DURATION>]` | Lists the installed packages that are visible within the namespace. Other namespaces are not queried. However packages of global API objects and their referenced (label) namespaces are listed as well. |
+| `list [--all-namespaces|--namespace <NS>] [--timeout <DURATION>]` | Lists the installed packages that are visible within the namespace. Other namespaces are not queried as long as `--all-namespaces` is not enabled. However packages of global API objects and their referenced (label) namespaces are listed as well. |
 
 ### Examples
 

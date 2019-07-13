@@ -9,8 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type K8sPackage []*K8sObject
-
 func WriteManifest(obj []*K8sObject, writer io.Writer) (err error) {
 	for _, o := range obj {
 		if err = o.WriteYaml(writer); err != nil {

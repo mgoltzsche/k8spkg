@@ -22,6 +22,7 @@ items:
     labels:
       k8s-app: kube-dns
       app.kubernetes.io/part-of: somepkg
+      k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
     name: somedeployment
     namespace: mynamespace
   spec:

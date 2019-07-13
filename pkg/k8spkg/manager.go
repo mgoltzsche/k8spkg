@@ -44,7 +44,7 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 	if pkgName == "" {
 		return nil, errors.New("no package name provided")
 	}
-	objects, err := m.objects(ctx, namespace, pkgName)
+	objects, err := m.objects(ctx, false, namespace, pkgName)
 	if err != nil {
 		return
 	}
@@ -75,7 +75,7 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 	}
 	for _, ns := range namespaces {
 		if ns != namespace {
-			if objects, err = kubectlGet(ctx, namespacedTypeNames, ns, pkgName); err != nil {
+			if objects, err = kubectlGet(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
 				return
 			}
 			pkg.Objects = append(pkg.Objects, objects...)
@@ -91,7 +91,7 @@ func (m *PackageManager) apiResources(ctx context.Context) (t []*APIResourceType
 	return m.resourceTypes, err
 }
 
-func (m *PackageManager) objects(ctx context.Context, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) objects(ctx context.Context, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
 	resTypes, err := m.apiResources(ctx)
 	if err != nil {
 		return
@@ -100,7 +100,7 @@ func (m *PackageManager) objects(ctx context.Context, namespace, pkgName string)
 	for i, t := range resTypes {
 		typeNames[i] = t.FullName()
 	}
-	return kubectlGet(ctx, typeNames, namespace, pkgName)
+	return kubectlGet(ctx, typeNames, allNamespaces, namespace, pkgName)
 }
 
 func detectNamespace(namespace string, objects []*model.K8sObject) string {
@@ -114,9 +114,9 @@ func detectNamespace(namespace string, objects []*model.K8sObject) string {
 	return namespace
 }
 
-func (m *PackageManager) List(ctx context.Context, namespace string) (pkgs []*PackageInfo, err error) {
+func (m *PackageManager) List(ctx context.Context, allNamespaces bool, namespace string) (pkgs []*PackageInfo, err error) {
 	// TODO: fetch necessary values only instead of whole objects
-	obj, err := m.objects(ctx, namespace, "")
+	obj, err := m.objects(ctx, allNamespaces, namespace, "")
 	if err != nil {
 		return
 	}
@@ -124,7 +124,7 @@ func (m *PackageManager) List(ctx context.Context, namespace string) (pkgs []*Pa
 	return
 }
 
-func kubectlGet(ctx context.Context, types []string, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+func kubectlGet(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
 	reader, writer := io.Pipe()
 	defer func() {
 		if e := reader.Close(); e != nil && err == nil {
@@ -150,6 +150,12 @@ func kubectlGet(ctx context.Context, types []string, namespace, pkgName string) 
 	args = append(args, "-o", "yaml")
 	if namespace != "" {
 		args = append(args, "-n", namespace)
+	}
+	if allNamespaces && namespace != "" {
+		return nil, errors.Errorf("invalid arguments: allNamespaces=true and namespace set")
+	}
+	if allNamespaces {
+		args = append(args, "--all-namespaces")
 	}
 	err = c.Run(args...)
 	writer.Close()

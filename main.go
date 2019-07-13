@@ -20,10 +20,9 @@ import (
 )
 
 var (
-	version    = "dev"
-	commit     = "none"
-	date       = "unknown"
-	apiManager = k8spkg.NewPackageManager()
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -33,12 +32,16 @@ func main() {
 }
 
 func run(args []string, out io.Writer) error {
-	debug := false
-	prune := false
-	var timeout time.Duration
+	var (
+		debug         bool
+		prune         bool
+		allNamespaces bool
+		timeout       time.Duration
+	)
 
+	apiManager := k8spkg.NewPackageManager()
 	app := cli.NewApp()
-	app.Name = "k8pkg"
+	app.Name = "k8spkg"
 	app.Version = version
 	app.Usage = "A CLI to manage kubernetes API objects in packages"
 	app.Author = "Max Goltzsche"
@@ -125,16 +128,12 @@ func run(args []string, out io.Writer) error {
 					return apiManager.Delete(ctx, opts.Namespace, c.Args()[0])
 				}
 				// Delete provided objects
-				reader, err := sourceReader(ctx, opts)
-				if err != nil {
-					return
-				}
-				obj, err := model.FromReader(reader)
+				pkg, err := sourcePackage(ctx, opts)
 				if err != nil {
 					return
 				}
 				// TODO: recover from wait error due to already removed object
-				return apiManager.DeleteObjects(ctx, obj)
+				return apiManager.DeleteObjects(ctx, pkg.Objects)
 			},
 		},
 		{
@@ -142,14 +141,20 @@ func run(args []string, out io.Writer) error {
 			Description: "Lists the packages installed within the cluster",
 			Usage:       "Lists the packages installed within the cluster",
 			UsageText:   "k8spkg [-n <NAMESPACE>] [--timeout <DURATION>] list",
-			Flags:       []cli.Flag{namespaceFlag, timeoutFlag},
+			Flags: append([]cli.Flag{namespaceFlag, timeoutFlag},
+				cli.BoolTFlag{
+					Name:        "all-namespaces",
+					Usage:       "Query all namespaces for packages",
+					Destination: &allNamespaces,
+				},
+			),
 			Action: func(c *cli.Context) (err error) {
 				if c.NArg() != 0 {
 					return cli.NewExitError("no arguments supported", 1)
 				}
 				ctx := newContext(timeout)
 				opts := inputOpts(c)
-				pkgs, err := apiManager.List(ctx, opts.Namespace)
+				pkgs, err := apiManager.List(ctx, allNamespaces, opts.Namespace)
 				if err != nil {
 					return
 				}
@@ -175,7 +180,7 @@ func run(args []string, out io.Writer) error {
 			Flags:       namedManifestFlags,
 			Action: func(c *cli.Context) (err error) {
 				ctx := newContext(timeout)
-				pkg, err := lookupPackage(ctx, c)
+				pkg, err := lookupPackage(ctx, c, apiManager)
 				if err != nil {
 					return
 				}
@@ -223,7 +228,7 @@ func newContext(timeout time.Duration) context.Context {
 	return ctx
 }
 
-func lookupPackage(ctx context.Context, c *cli.Context) (pkg *k8spkg.K8sPackage, err error) {
+func lookupPackage(ctx context.Context, c *cli.Context, pkgManager *k8spkg.PackageManager) (pkg *k8spkg.K8sPackage, err error) {
 	if c.NArg() > 1 {
 		return nil, cli.NewExitError("too many arguments provided", 1)
 	}
@@ -236,7 +241,7 @@ func lookupPackage(ctx context.Context, c *cli.Context) (pkg *k8spkg.K8sPackage,
 		if opts.option != "" {
 			return nil, errors.Errorf("package name and -%s option are exclusive but both provided", opts.option)
 		}
-		pkg, err = apiManager.State(ctx, opts.Namespace, c.Args()[0])
+		pkg, err = pkgManager.State(ctx, opts.Namespace, c.Args()[0])
 	} else {
 		// Load manifest from provided source
 		pkg, err = sourcePackage(ctx, opts)

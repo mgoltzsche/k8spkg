@@ -38,7 +38,14 @@ test: golang-image
 	$(DOCKERRUN) \
 		-e GOOS=linux \
 		-e CGO_ENABLED=0 \
-		$(GOIMAGE) go test -v -coverprofile coverage.out -cover ./...
+		$(GOIMAGE) go test -coverprofile coverage.out -cover ./...
+
+coverage-report: test
+	$(DOCKERRUN) \
+		-e GOOS=linux \
+		-e CGO_ENABLED=0 \
+		$(GOIMAGE) go tool cover -html=coverage.out -o coverage.html
+	firefox coverage.html
 
 golang-image:
 	echo "$$GODOCKERFILE" | docker build --force-rm -t $(GOIMAGE) -

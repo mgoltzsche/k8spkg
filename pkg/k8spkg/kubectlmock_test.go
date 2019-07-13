@@ -61,6 +61,15 @@ func mockKubectl() (err error) {
 	}
 
 	// Mock logic
+	objInOtherNs := `---
+apiVersion: someapi/v1
+kind: SomeKind
+metadata:
+  name: someobj
+  namespace: othernamespace
+  labels:
+    app.kubernetes.io/part-of: pkg-othernamespace
+`
 	switch strings.Join(os.Args[1:], " ") {
 	case kubectlGetCall:
 		err = printFile("../model/test/k8sobjectlist.yaml")
@@ -68,6 +77,20 @@ func mockKubectl() (err error) {
 	case kubectlGetCallNsEmpty:
 		err = printFile("../model/test/k8sobjectlist.yaml")
 		err = printFile("../model/test/contained-pod-rs.yaml")
+	case kubectlGetCallNsCertManager:
+		err = printFile("../model/test/kustomize/mycert.yaml")
+	case kubectlListCall:
+		err = printFile("../model/test/k8sobjectlist.yaml")
+		err = printFile("../model/test/contained-pod-rs.yaml")
+		fmt.Println(objInOtherNs)
+	case kubectlListCallNsEmpty:
+		err = printFile("../model/test/k8sobjectlist.yaml")
+		err = printFile("../model/test/contained-pod-rs.yaml")
+		fmt.Println(objInOtherNs)
+	case kubectlListCallAllNamespaces:
+		err = printFile("../model/test/k8sobjectlist.yaml")
+		err = printFile("../model/test/contained-pod-rs.yaml")
+		fmt.Println(objInOtherNs)
 	case kubectlApplyCall:
 		var f *os.File
 		if f, err = os.OpenFile(os.Getenv("K8SPKGTEST_STDIN"), os.O_CREATE|os.O_WRONLY, 0644); err == nil {
@@ -121,6 +144,9 @@ func assertKubectlCalls(t *testing.T, expectedCalls []string, errorAfterCall int
 	require.NoError(t, err)
 	err = os.Setenv("K8SPKGTEST_CALLS", kubectlCallFile)
 	require.NoError(t, err)
+	defer func() {
+		os.Unsetenv("K8SPKGTEST_CALLS")
+	}()
 	err = os.Setenv("K8SPKGTEST_STDIN", stdinFile)
 	require.NoError(t, err)
 	testee(stdinFile)

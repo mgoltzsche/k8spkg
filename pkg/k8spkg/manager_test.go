@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io/ioutil"
+	"strings"
 	"testing"
 
 	"github.com/mgoltzsche/k8spkg/pkg/model"
@@ -82,7 +83,7 @@ func TestPackageManagerState(t *testing.T) {
 			for _, o := range pkg.Objects {
 				s += "\n  " + o.ID()
 			}
-			require.Equal(t, 8, len(pkg.Objects), "amount of loaded objects\nobjects: %s", s)
+			require.Equal(t, 9, len(pkg.Objects), "amount of loaded objects\nobjects: %s", s)
 		}
 	}
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(testNamespace))
@@ -107,8 +108,8 @@ func TestPackageManagerDelete(t *testing.T) {
 		kubectlGetCall,
 		kubectlGetCallNsCertManager,
 		kubectlGetCallNsMynamespace,
-		"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n cert-manager certificate/onemorecert",
-		"wait --for delete --timeout=2m -n cert-manager certificate/onemorecert",
+		"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n cert-manager certificate/onemorecert certificate/mycert",
+		"wait --for delete --timeout=2m -n cert-manager certificate/onemorecert certificate/mycert",
 		"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n mynamespace deployment/somedeployment deployment/mydeployment",
 		"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n cert-manager deployment/cert-manager-webhook",
 		"wait --for delete --timeout=2m -n mynamespace deployment/somedeployment deployment/mydeployment",
@@ -141,5 +142,46 @@ func TestPackageManagerDelete(t *testing.T) {
 	assertKubectlCalls(t, expectedCalls, 4, func(_ string) {
 		testee := NewPackageManager()
 		require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"))
+	})
+}
+
+var kubectlListCall = "get " + resTypesStr + " -o yaml -n " + testNamespace
+var kubectlListCallNsEmpty = "get " + resTypesStr + " -o yaml"
+var kubectlListCallAllNamespaces = "get " + resTypesStr + " -o yaml --all-namespaces"
+
+func TestPackageManagerList(t *testing.T) {
+	expectedCalls := []string{
+		kubectlResTypeCall,
+		kubectlListCall,
+	}
+	// with kubectl success
+	assertns := func(allNamespaces bool, ns string) func(string) {
+		return func(_ string) {
+			testee := NewPackageManager()
+			pkgs, err := testee.List(context.Background(), allNamespaces, ns)
+			require.NoError(t, err)
+			names := make([]string, len(pkgs))
+			namespaces := make([]string, len(pkgs))
+			for i, p := range pkgs {
+				names[i] = p.Name
+				namespaces[i] = strings.Join(p.Namespaces, ".")
+			}
+			require.Equal(t, []string{"pkg-othernamespace", "somepkg"}, names, "package list")
+			require.Equal(t, []string{"othernamespace", "cert-manager.mynamespace"}, namespaces, "package namespaces")
+		}
+	}
+	assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(false, testNamespace))
+	expectedCalls[1] = kubectlListCallNsEmpty
+	assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(false, ""))
+	expectedCalls = []string{
+		kubectlResTypeCall,
+		kubectlListCallAllNamespaces,
+	}
+	assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(true, ""))
+	// with kubectl error
+	assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
+		testee := NewPackageManager()
+		_, err := testee.State(context.Background(), "", "somepkg")
+		assert.Error(t, err)
 	})
 }
