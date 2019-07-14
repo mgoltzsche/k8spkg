@@ -1,6 +1,3 @@
-**/downloads/
 /k8spkg
 coverage.out
 coverage.html
-.liteide-cache
-.build-cache

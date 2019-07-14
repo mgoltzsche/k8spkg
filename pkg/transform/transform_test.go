@@ -10,7 +10,7 @@ import (
 	"github.com/mgoltzsche/k8spkg/pkg/kustomize"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v2"
 )
 
 func TestTransform(t *testing.T) {

@@ -3,55 +3,70 @@ USER=$(shell id -u)
 PKG=github.com/mgoltzsche/k8spkg
 
 COMMIT_ID=$(shell git rev-parse HEAD)
-COMMIT_TAG=$(shell git describe --exact-match ${COMMIT_ID} || echo -n "dev")
+COMMIT_TAG=$(shell git describe ${COMMIT_ID} || echo -n "dev")
 COMMIT_DATE=$(shell git show -s --format=%ci ${COMMIT_ID})
 LDFLAGS=-X main.commit=${COMMIT_ID} -X main.version=${COMMIT_TAG} -X "main.date=${COMMIT_DATE}"
 BUILDTAGS?=
 
-CGO_ENABLED=1
-GOIMAGE=k8spkg-golang
+GOIMAGE=k8spkg-go
+LITEIDEIMAGE=mgoltzsche/liteide:x36
 DOCKERRUN=docker run --name k8spkg-build --rm \
-		-v "$(shell pwd)/.build-cache:/go" \
 		-v "$(shell pwd):/go/src/$(PKG)" \
 		-w "/go/src/$(PKG)" \
 		-u $(USER):$(USER) \
 		-e HOME=/go \
-		-e GO111MODULE=on
+		-e CGO_ENABLED=0
 define GODOCKERFILE
 FROM golang:1.12-alpine3.9
-RUN apk add --update --no-cache git
-RUN rm -rf /go/*
+RUN apk add --update --no-cache make git
+RUN go get golang.org/x/lint/golint
 endef
 export GODOCKERFILE
 
-all: clean k8spkg
+all: clean build
 
-k8spkg: golang-image
-	mkdir -p .build-cache
-	$(DOCKERRUN) \
-		-e GOOS=linux \
-		-e CGO_ENABLED=0 \
-		$(GOIMAGE) go build -a -ldflags '-s -w -extldflags "-static" $(LDFLAGS)' -tags '$(BUILDTAGS)' .
+build: golang-image
+	$(DOCKERRUN) $(GOIMAGE) \
+		make k8spkg BUILDTAGS=$(BUILDTAGS)
 
-test: golang-image
-	mkdir -p .build-cache
-	$(DOCKERRUN) \
-		-e GOOS=linux \
-		-e CGO_ENABLED=0 \
-		$(GOIMAGE) go test -coverprofile coverage.out -cover ./...
+k8spkg:
+	go build -a -ldflags '-s -w -extldflags "-static" $(LDFLAGS)' -tags '$(BUILDTAGS)' .
 
-coverage-report: test
-	$(DOCKERRUN) \
-		-e GOOS=linux \
-		-e CGO_ENABLED=0 \
-		$(GOIMAGE) go tool cover -html=coverage.out -o coverage.html
+test:
+	go test -coverprofile coverage.out -cover ./...
+
+coverage: test
+	go tool cover -html=coverage.out -o coverage.html
+
+clean:
+	rm -f k8spkg coverage.out coverage.html
+
+lint-docker: golang-imag
+	$(DOCKERRUN) $(GOIMAGE) make lint
+lint:
+	# TODO: use in check target
+	golint -set_exit_status $(shell go list ./...)
+
+check: golang-image
+	$(DOCKERRUN) $(GOIMAGE) \
+		make clean k8spkg test BUILDTAGS=$(BUILDTAGS)
+
+coverage-report: golang-image
+	$(DOCKERRUN) $(GOIMAGE) make coverage
 	firefox coverage.html
+
+vendor-update: golang-image
+	$(DOCKERRUN) -e GO111MODULE=on $(GOIMAGE) go mod vendor
 
 golang-image:
 	echo "$$GODOCKERFILE" | docker build --force-rm -t $(GOIMAGE) -
 
-clean:
-	rm -f k8spkg
-
 ide:
-	run-liteide . "$(PKG)"
+	docker run -d --name liteide-k8spkg --rm \
+		-e DISPLAY="$(shell echo $$DISPLAY)" \
+		-e CHUSR=$(shell id -u):$(shell id -g) \
+		--mount type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix \
+		--mount type=bind,src=/etc/machine-id,dst=/etc/machine-id \
+		--mount "type=bind,src=$(shell pwd),dst=/go/$(PKG)" \
+		"$(LITEIDEIMAGE)" \
+		"/go/$(PKG)"

@@ -3,23 +3,23 @@
 package kustomize
 
 import (
-	"sigs.k8s.io/kustomize/k8sdeps/kunstruct"
-	transformimpl "sigs.k8s.io/kustomize/k8sdeps/transformer"
-	"sigs.k8s.io/kustomize/k8sdeps/validator"
-	"sigs.k8s.io/kustomize/pkg/fs"
-	"sigs.k8s.io/kustomize/pkg/loader"
-	"sigs.k8s.io/kustomize/pkg/plugins"
-	"sigs.k8s.io/kustomize/pkg/resmap"
-	"sigs.k8s.io/kustomize/pkg/resource"
-	"sigs.k8s.io/kustomize/pkg/target"
+	"sigs.k8s.io/kustomize/v3/k8sdeps/kunstruct"
+	transformimpl "sigs.k8s.io/kustomize/v3/k8sdeps/transformer"
+	"sigs.k8s.io/kustomize/v3/k8sdeps/validator"
+	"sigs.k8s.io/kustomize/v3/pkg/fs"
+	"sigs.k8s.io/kustomize/v3/pkg/loader"
+	"sigs.k8s.io/kustomize/v3/pkg/plugins"
+	"sigs.k8s.io/kustomize/v3/pkg/resmap"
+	"sigs.k8s.io/kustomize/v3/pkg/resource"
+	"sigs.k8s.io/kustomize/v3/pkg/target"
 )
 
 func Render(o RenderOptions) (err error) {
 	fSys := fs.MakeRealFS()
 	uf := kunstruct.NewKunstructuredFactoryImpl()
-	rf := resmap.NewFactory(resource.NewFactory(uf))
-	v := validator.NewKustValidator()
 	ptf := transformimpl.NewFactoryImpl()
+	rf := resmap.NewFactory(resource.NewFactory(uf), ptf)
+	v := validator.NewKustValidator()
 	pl := plugins.NewLoader(plugins.DefaultPluginConfig(), rf)
 
 	loadRestrictor := loader.RestrictionRootOnly

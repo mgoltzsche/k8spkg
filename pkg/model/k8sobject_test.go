@@ -7,27 +7,27 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v2"
 )
 
 func TestK8sObject(t *testing.T) {
 	manifest := `apiVersion: certmanager.k8s.io/v1alpha1
 kind: Issuer
 metadata:
-    labels:
-        app.kubernetes.io/part-of: mypkg
-    name: ca-issuer
-    namespace: cert-manager
-    ownerReferences:
-      - apiVersion: apps/v1
-        kind: Deployment
-        name: cert-manager-webhook
-        uid: b99471c0-96d6-11e9-bafd-0242a54f69f8
+  labels:
+    app.kubernetes.io/part-of: mypkg
+  name: ca-issuer
+  namespace: cert-manager
+  ownerReferences:
+  - apiVersion: apps/v1
+    kind: Deployment
+    name: cert-manager-webhook
+    uid: b99471c0-96d6-11e9-bafd-0242a54f69f8
 spec:
-    group: agroup
-    names:
-        kind: akind
-    version: aversion
+  group: agroup
+  names:
+    kind: akind
+  version: aversion
 `
 	obj := map[string]interface{}{}
 	err := yaml.Unmarshal([]byte(manifest), obj)

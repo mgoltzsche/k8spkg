@@ -9,7 +9,7 @@ import (
 
 	"github.com/mgoltzsche/k8spkg/pkg/kustomize"
 	"github.com/pkg/errors"
-	"gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v2"
 )
 
 var render func(kustomize.RenderOptions) error = kustomize.Render

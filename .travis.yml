@@ -2,7 +2,7 @@ sudo: required
 services:
 - docker
 script:
-- make test k8spkg
+- make check
 deploy:
   provider: releases
   api_key:

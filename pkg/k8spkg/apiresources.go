@@ -14,11 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type ApiResourceTypes struct {
-	namespaced []string
-	cluster    []string
-}
-
+// APIResourceType represents a Kubernetes API resource type's metadata
 type APIResourceType struct {
 	Name       string
 	ShortNames []string
