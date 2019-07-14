@@ -5,7 +5,9 @@ PKG=github.com/mgoltzsche/k8spkg
 COMMIT_ID=$(shell git rev-parse HEAD)
 COMMIT_TAG=$(shell git describe ${COMMIT_ID} || echo -n "dev")
 COMMIT_DATE=$(shell git show -s --format=%ci ${COMMIT_ID})
-LDFLAGS=-X main.commit=${COMMIT_ID} -X main.version=${COMMIT_TAG} -X "main.date=${COMMIT_DATE}"
+LDFLAGS=-X "github.com/mgoltzsche/k8spkg/pkg/cmd.version=${COMMIT_TAG}" \
+	-X "github.com/mgoltzsche/k8spkg/pkg/cmd.commit=${COMMIT_ID}" \
+	-X "github.com/mgoltzsche/k8spkg/pkg/cmd.date=${COMMIT_DATE}"
 BUILDTAGS?=
 
 GOIMAGE=k8spkg-go
@@ -20,6 +22,7 @@ define GODOCKERFILE
 FROM golang:1.12-alpine3.9
 RUN apk add --update --no-cache make git
 RUN go get golang.org/x/lint/golint
+RUN go get github.com/spf13/cobra/cobra
 endef
 export GODOCKERFILE
 
@@ -41,7 +44,10 @@ coverage: test
 clean:
 	rm -f k8spkg coverage.out coverage.html
 
-lint-docker: golang-imag
+cobra:
+	$(DOCKERRUN) $(GOIMAGE) cobra add manifest
+
+lint-docker: golang-image
 	$(DOCKERRUN) $(GOIMAGE) make lint
 lint:
 	# TODO: use in check target

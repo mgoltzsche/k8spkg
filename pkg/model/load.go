@@ -65,13 +65,6 @@ func copySourceFiles(ctx context.Context, src, baseDir string, writer io.Writer)
 	return errors.Wrapf(err, "source %s", src)
 }
 
-func withContext(ctx context.Context) func(*getter.Client) error {
-	return func(c *getter.Client) error {
-		c.Ctx = ctx
-		return nil
-	}
-}
-
 func copyFiles(ctx context.Context, file string, writer io.Writer) (err error) {
 	si, err := os.Stat(file)
 	if err == nil {

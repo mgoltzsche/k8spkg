@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"testing"
 
@@ -37,10 +38,15 @@ spec:
 	assert.Equal(t, "Issuer", o.Kind, "kind")
 	assert.Equal(t, "ca-issuer", o.Name, "name")
 	assert.Equal(t, "cert-manager", o.Namespace, "namespace")
-	assert.Equal(t, "agroup/aversion/akind", o.CrdGvk(), "crd group/version/kind")
 	assert.Equal(t, "apps/v1", o.OwnerReferences()[0].APIVersion, "ownerReferences[0].apiVersion")
 	assert.Equal(t, "Deployment", o.OwnerReferences()[0].Kind, "ownerReferences[0].kind")
 	assert.Equal(t, "cert-manager-webhook", o.OwnerReferences()[0].Name, "ownerReferences[0].name")
+	assert.Equal(t, "cert-manager/certmanager.k8s.io/v1alpha1/Issuer/ca-issuer", o.ID(), "ID()")
+	assert.Equal(t, "certmanager.k8s.io/v1alpha1/Issuer", o.Gvk(), "Gvk()")
+	assert.Equal(t, "agroup/aversion/akind", o.CrdGvk(), "crd group/version/kind")
+	if assert.NotNil(t, o.Labels(), "labels") {
+		assert.Equal(t, "mypkg", o.Labels()["app.kubernetes.io/part-of"], "label")
+	}
 
 	var buf bytes.Buffer
 	err = o.WriteYaml(&buf)
@@ -60,4 +66,34 @@ func TestK8sObjectFromReader(t *testing.T) {
 	}
 	expectedNames := []string{"certificates.certmanager.k8s.io", "somedeployment", "myapiservice", "mydeployment", "onemorecert", "cert-manager-webhook"}
 	assert.Equal(t, expectedNames, names, "flattened object names")
+}
+
+func TestWriteManifest(t *testing.T) {
+	manifest := ""
+	for i := 0; i < 2; i++ {
+		manifest += `---
+apiVersion: some.api/aversion
+kind: SomeKind
+metadata:
+  name: object` + fmt.Sprintf("%d", i) + `
+  namespace: myns
+  sth: else
+`
+	}
+	obj := make([]*K8sObject, 2)
+	for i := 0; i < 2; i++ {
+		obj[i] = FromMap(map[string]interface{}{
+			"apiVersion": "some.api/aversion",
+			"kind":       "SomeKind",
+			"metadata": map[string]interface{}{
+				"name":      fmt.Sprintf("object%d", i),
+				"namespace": "myns",
+				"sth":       "else",
+			},
+		})
+	}
+	var buf bytes.Buffer
+	err := WriteManifest(obj, &buf)
+	require.NoError(t, err)
+	assert.Equal(t, manifest, buf.String())
 }

@@ -166,9 +166,6 @@ func kubectlGet(ctx context.Context, types []string, allNamespaces bool, namespa
 }
 
 func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool) (err error) {
-	// TODO: store source URL as commonLabel as well and provide an option to
-	//       require source equality to do a k8s object update to make
-	//       sure nobody accidentally deletes k8s objects when reusing an existing package name
 	logrus.Infof("Applying package %s", pkg.Name)
 	reader := manifestReader(pkg.Objects)
 	pkgLabel := PKG_NAME_LABEL + "=" + pkg.Name
@@ -331,6 +328,7 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
 			if e := kubectlWaitNames(cmd, ns, names(nsMap[ns]), "delete"); e != nil && err == nil {
+				// TODO: check if objects still exist to resolve error
 				msg := e.Error()
 				sout := stdout.String()
 				serr := stderr.String()
