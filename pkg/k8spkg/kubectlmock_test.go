@@ -118,9 +118,8 @@ func trackedKubectlCalls(kubectlCallFile string) (calls []string, err error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
-		} else {
-			return
 		}
+		return
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)

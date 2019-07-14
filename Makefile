@@ -22,7 +22,6 @@ define GODOCKERFILE
 FROM golang:1.12-alpine3.9
 RUN apk add --update --no-cache make git
 RUN go get golang.org/x/lint/golint
-RUN go get github.com/spf13/cobra/cobra
 endef
 export GODOCKERFILE
 
@@ -44,8 +43,10 @@ coverage: test
 clean:
 	rm -f k8spkg coverage.out coverage.html
 
-cobra:
-	$(DOCKERRUN) $(GOIMAGE) cobra add manifest
+check-fmt-docker: golang-image
+	$(DOCKERRUN) $(GOIMAGE) make check-fmt
+check-fmt:
+	cd "$$GOPATH/src" && MSGS="$$(gofmt -s -d $(shell go list ./pkg/...))" && [ ! "$$MSGS" ] || (echo "$$MSGS"; false)
 
 lint-docker: golang-image
 	$(DOCKERRUN) $(GOIMAGE) make lint
@@ -55,7 +56,7 @@ lint:
 
 check: golang-image
 	$(DOCKERRUN) $(GOIMAGE) \
-		make clean k8spkg test BUILDTAGS=$(BUILDTAGS)
+		make clean k8spkg test check-fmt BUILDTAGS=$(BUILDTAGS)
 
 coverage-report: golang-image
 	$(DOCKERRUN) $(GOIMAGE) make coverage

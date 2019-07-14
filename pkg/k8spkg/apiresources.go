@@ -23,6 +23,7 @@ type APIResourceType struct {
 	Namespaced bool
 }
 
+// Returns the type's short name if any or its name
 func (t *APIResourceType) ShortName() (name string) {
 	name = t.Name
 	if len(t.ShortNames) > 0 {
@@ -31,6 +32,7 @@ func (t *APIResourceType) ShortName() (name string) {
 	return
 }
 
+// Returns the type's short name with APIGroup suffix if there is one
 func (t *APIResourceType) FullName() (name string) {
 	if t.APIGroup == "" {
 		return t.ShortName()
@@ -114,7 +116,6 @@ func parseApiResourceTable(reader io.Reader) (types []*APIResourceType, err erro
 		}
 		types = append(types, rtype)
 	}
-	return
 }
 
 func readTableHeader(reader *bufio.Reader) (colNames []string, colReaders []func(string) string, err error) {

@@ -53,14 +53,14 @@ func PackageInfosFromObjects(obj []*model.K8sObject) (pkgs []*PackageInfo, err e
 		}
 	}
 	pkgNames := make([]string, 0, len(pkgMap))
-	for pkgName, _ := range pkgMap {
+	for pkgName := range pkgMap {
 		pkgNames = append(pkgNames, pkgName)
 	}
 	sort.Strings(pkgNames)
 	for _, pkgName := range pkgNames {
 		pkg := pkgMap[pkgName]
 		ns := make([]string, 0, len(pkg.namespaces))
-		for nsName, _ := range pkg.namespaces {
+		for nsName := range pkg.namespaces {
 			ns = append(ns, nsName)
 		}
 		sort.Strings(ns)

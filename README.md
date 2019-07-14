@@ -1,4 +1,6 @@
-k8spkg [![Build Status](https://travis-ci.org/mgoltzsche/k8spkg.svg?branch=master)](https://travis-ci.org/mgoltzsche/k8spkg)
+k8spkg
+[![Build Status](https://travis-ci.org/mgoltzsche/k8spkg.svg?branch=master)](https://travis-ci.org/mgoltzsche/k8spkg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mgoltzsche/k8spkg)](https://goreportcard.com/report/github.com/mgoltzsche/k8spkg)
 =
 
 A wrapper around kubectl to transform, deploy, undeploy and retrieve
