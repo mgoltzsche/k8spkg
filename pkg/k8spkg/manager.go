@@ -169,8 +169,9 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 	logrus.Infof("Applying package %s", pkg.Name)
 	reader := manifestReader(pkg.Objects)
 	pkgLabel := PKG_NAME_LABEL + "=" + pkg.Name
-	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-"}
+	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-", "--record"}
 	if prune {
+		// TODO: delete objects within other namespaces that belong to the package as well
 		args = append(args, "-l", pkgLabel, "--prune")
 	}
 	cmd := newKubectlCmd(ctx)

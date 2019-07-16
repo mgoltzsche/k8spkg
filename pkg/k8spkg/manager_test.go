@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	kubectlApplyCall = "apply --wait=true --timeout=2m -f - -l app.kubernetes.io/part-of=somepkg --prune"
+	kubectlApplyCall = "apply --wait=true --timeout=2m -f - --record -l app.kubernetes.io/part-of=somepkg --prune"
 )
 
 func TestPackageManagerApply(t *testing.T) {
@@ -51,7 +51,7 @@ func TestPackageManagerApply(t *testing.T) {
 	})
 
 	// Assert prune option and kubectl error are passed through
-	expectedCalls = []string{"apply --wait=true --timeout=2m -f -"}
+	expectedCalls = []string{"apply --wait=true --timeout=2m -f - --record"}
 	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
 		testee := NewPackageManager()
 		err := testee.Apply(context.Background(), pkg, false)

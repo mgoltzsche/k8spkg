@@ -157,6 +157,7 @@ func TestCLI(t *testing.T) {
 		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"apply", "-k", "../model/test/kustomize"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, []string{"apply", "rollout", "wait"}},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"delete", "-f", "../model/test"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test", "-n", "myns"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-k", "../model/test/kustomize"}, []string{"delete", "wait"}},
