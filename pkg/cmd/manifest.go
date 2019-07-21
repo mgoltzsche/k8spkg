@@ -30,7 +30,7 @@ var (
 		Long:  "Prints the merged and labeled manifest",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager()
+			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
 			pkg, err := lookupPackage(ctx, args, apiManager)
 			if err != nil {
 				return

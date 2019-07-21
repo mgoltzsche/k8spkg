@@ -42,9 +42,13 @@ func (t *APIResourceType) FullName() (name string) {
 
 var headerRegex = regexp.MustCompile(`[^\s]+($|\s+)`)
 
-func LoadAPIResourceTypes(ctx context.Context) (types []*APIResourceType, err error) {
+func LoadAPIResourceTypes(ctx context.Context, kubeconfigFile string) (types []*APIResourceType, err error) {
 	var stdout, stderr bytes.Buffer
-	c := exec.CommandContext(ctx, "kubectl", "api-resources", "--verbs", "delete")
+	args := []string{"api-resources", "--verbs", "delete"}
+	if kubeconfigFile != "" {
+		args = append([]string{"--kubeconfig", kubeconfigFile}, args...)
+	}
+	c := exec.CommandContext(ctx, "kubectl", args...)
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 	logrus.Debugf("Running %+v", c.Args)

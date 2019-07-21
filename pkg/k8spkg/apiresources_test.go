@@ -10,7 +10,8 @@ import (
 )
 
 const (
-	kubectlResTypeCall = "api-resources --verbs delete"
+	kubectlResTypeCall           = "api-resources --verbs delete"
+	kubectlResTypeCallKubeconfig = "--kubeconfig kubeconfig.yaml " + kubectlResTypeCall
 )
 
 var (
@@ -30,16 +31,22 @@ customresourcedefinitions         crd,crds     apiextensions.k8s.io           fa
 
 func TestLoadApiResourceTypes(t *testing.T) {
 	ctx := context.Background()
-	expectedCalls := []string{kubectlResTypeCall}
 	// with kubectl success
+	expectedCalls := []string{kubectlResTypeCall}
 	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
-		types, err := LoadAPIResourceTypes(ctx)
+		types, err := LoadAPIResourceTypes(ctx, "")
+		require.NoError(t, err)
+		require.Equal(t, typeNames(types), resTypes)
+	})
+	expectedCalls = []string{kubectlResTypeCallKubeconfig}
+	assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
+		types, err := LoadAPIResourceTypes(ctx, "kubeconfig.yaml")
 		require.NoError(t, err)
 		require.Equal(t, typeNames(types), resTypes)
 	})
 	// with kubectl failure
-	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
-		_, err := LoadAPIResourceTypes(ctx)
+	assertKubectlCalls(t, []string{kubectlResTypeCall}, 0, func(_ string) {
+		_, err := LoadAPIResourceTypes(ctx, "")
 		require.Error(t, err)
 	})
 }

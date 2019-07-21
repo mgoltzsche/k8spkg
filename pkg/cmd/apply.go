@@ -28,7 +28,7 @@ var (
 and waits for the rollout to complete`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager()
+			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
 			pkg, err := sourcePackage(ctx)
 			if err != nil {
 				return

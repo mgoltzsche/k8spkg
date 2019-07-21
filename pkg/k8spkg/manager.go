@@ -20,11 +20,12 @@ const (
 )
 
 type PackageManager struct {
-	resourceTypes []*APIResourceType
+	kubeconfigFile string
+	resourceTypes  []*APIResourceType
 }
 
-func NewPackageManager() *PackageManager {
-	return &PackageManager{}
+func NewPackageManager(kubeconfigFile string) *PackageManager {
+	return &PackageManager{kubeconfigFile, nil}
 }
 
 func (m *PackageManager) clearResourceTypeCache() {
@@ -75,7 +76,7 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 	}
 	for _, ns := range namespaces {
 		if ns != namespace {
-			if objects, err = kubectlGet(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
+			if objects, err = m.kubectlGet(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
 				return
 			}
 			pkg.Objects = append(pkg.Objects, objects...)
@@ -86,7 +87,7 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 
 func (m *PackageManager) apiResources(ctx context.Context) (t []*APIResourceType, err error) {
 	if m.resourceTypes == nil {
-		m.resourceTypes, err = LoadAPIResourceTypes(ctx)
+		m.resourceTypes, err = LoadAPIResourceTypes(ctx, m.kubeconfigFile)
 	}
 	return m.resourceTypes, err
 }
@@ -100,7 +101,7 @@ func (m *PackageManager) objects(ctx context.Context, allNamespaces bool, namesp
 	for i, t := range resTypes {
 		typeNames[i] = t.FullName()
 	}
-	return kubectlGet(ctx, typeNames, allNamespaces, namespace, pkgName)
+	return m.kubectlGet(ctx, typeNames, allNamespaces, namespace, pkgName)
 }
 
 func detectNamespace(namespace string, objects []*model.K8sObject) string {
@@ -124,7 +125,7 @@ func (m *PackageManager) List(ctx context.Context, allNamespaces bool, namespace
 	return
 }
 
-func kubectlGet(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) kubectlGet(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
 	reader, writer := io.Pipe()
 	defer func() {
 		if e := reader.Close(); e != nil && err == nil {
@@ -139,7 +140,7 @@ func kubectlGet(ctx context.Context, types []string, allNamespaces bool, namespa
 		errc <- e
 		writer.CloseWithError(e)
 	}()
-	c := newKubectlCmd(ctx)
+	c := newKubectlCmd(ctx, m.kubeconfigFile)
 	c.Stdout = writer
 	c.Stderr = os.Stderr
 	typeCsv := strings.Join(types, ",")
@@ -174,7 +175,7 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 		// TODO: delete objects within other namespaces that belong to the package as well
 		args = append(args, "-l", pkgLabel, "--prune")
 	}
-	cmd := newKubectlCmd(ctx)
+	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 	cmd.Stdin = reader
 	err = cmd.Run(args...)
 	if e := reader.Close(); e != nil && err == nil {
@@ -199,7 +200,7 @@ func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObjec
 		}
 		args = append(args, strings.ToLower(o.Kind)+"/"+o.Name)
 
-		if err = newKubectlCmd(ctx).Run(args...); err != nil {
+		if err = newKubectlCmd(ctx, m.kubeconfigFile).Run(args...); err != nil {
 			return
 		}
 		select {
@@ -219,7 +220,7 @@ func (m *PackageManager) awaitAvailability(ctx context.Context, obj []*model.K8s
 		return nil
 	}
 	logrus.Debugf("Waiting for %d components to become available...", len(obj))
-	return kubectlWait(newKubectlCmd(ctx), obj, "condition=available")
+	return kubectlWait(newKubectlCmd(ctx, m.kubeconfigFile), obj, "condition=available")
 }
 
 func kubectlWait(cmd *kubectlCmd, obj []*model.K8sObject, forExpr string) (err error) {
@@ -314,7 +315,7 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 		nsMap, nsOrder := groupByNamespace(items)
 		for _, ns := range nsOrder {
 			nonContained := filter(nsMap[ns], isNoContainedObject)
-			if e := deleteObjectNames(ctx, ns, names(nonContained)); e != nil && err == nil {
+			if e := m.deleteObjectNames(ctx, ns, names(nonContained)); e != nil && err == nil {
 				err = e
 			}
 			select {
@@ -324,7 +325,7 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 			}
 		}
 		for _, ns := range nsOrder {
-			cmd := newKubectlCmd(ctx)
+			cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
@@ -351,7 +352,7 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 	return
 }
 
-func deleteObjectNames(ctx context.Context, ns string, names []string) (err error) {
+func (m *PackageManager) deleteObjectNames(ctx context.Context, ns string, names []string) (err error) {
 	if len(names) == 0 {
 		return
 	}
@@ -359,7 +360,7 @@ func deleteObjectNames(ctx context.Context, ns string, names []string) (err erro
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	return newKubectlCmd(ctx).Run(append(args, names...)...)
+	return newKubectlCmd(ctx, m.kubeconfigFile).Run(append(args, names...)...)
 }
 
 func isNoContainedObject(o *model.K8sObject) bool {
@@ -397,21 +398,26 @@ func manifestReader(objects []*model.K8sObject) io.ReadCloser {
 }
 
 type kubectlCmd struct {
-	ctx    context.Context
-	Stdout io.Writer
-	Stderr io.Writer
-	Stdin  io.Reader
+	ctx            context.Context
+	kubeconfigFile string
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Stdin          io.Reader
 }
 
-func newKubectlCmd(ctx context.Context) *kubectlCmd {
+func newKubectlCmd(ctx context.Context, kubeconfigFile string) *kubectlCmd {
 	return &kubectlCmd{
-		ctx:    ctx,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		ctx:            ctx,
+		kubeconfigFile: kubeconfigFile,
+		Stdout:         os.Stdout,
+		Stderr:         os.Stderr,
 	}
 }
 
 func (c *kubectlCmd) Run(args ...string) (err error) {
+	if c.kubeconfigFile != "" {
+		args = append([]string{"--kubeconfig", c.kubeconfigFile}, args...)
+	}
 	cmd := exec.CommandContext(c.ctx, "kubectl", args...)
 	cmd.Stdout = c.Stdout
 	cmd.Stderr = c.Stderr

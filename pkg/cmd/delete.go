@@ -31,7 +31,7 @@ var (
 				return errors.New("too many arguments provided")
 			}
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager()
+			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
 			if len(args) == 1 {
 				// Find and delete objects by package name
 				if sourceKustomize != "" || sourceFile != "" {

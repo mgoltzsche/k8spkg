@@ -70,7 +70,11 @@ metadata:
   labels:
     app.kubernetes.io/part-of: pkg-othernamespace
 `
-	switch strings.Join(os.Args[1:], " ") {
+	strippedArgs := os.Args[1:]
+	if strippedArgs[0] == "--kubeconfig" {
+		strippedArgs = strippedArgs[2:]
+	}
+	switch strings.Join(strippedArgs, " ") {
 	case kubectlGetCall:
 		err = printFile("../model/test/k8sobjectlist.yaml")
 		err = printFile("../model/test/contained-pod-rs.yaml")

@@ -40,7 +40,11 @@ func mockKubectl() (err error) {
 	defer f.Close()
 	fmt.Fprintf(f, "%s\n", argStr)
 	out := ""
-	switch os.Args[1] {
+	strippedArgs := os.Args[1:]
+	if strippedArgs[0] == "--kubeconfig" {
+		strippedArgs = strippedArgs[2:]
+	}
+	switch strippedArgs[0] {
 	case "api-resources":
 		out = `NAME                              SHORTNAMES   APIGROUP                       NAMESPACED   KIND
 configmaps                        cm                                          true         ConfigMap
@@ -84,7 +88,11 @@ func assertKubectlCmdsUsed(t *testing.T, args, expectedCmds []string, callMap ma
 	require.NoError(t, err, "tracked kubectl calls of %+v", args)
 	actualCmds := []string{}
 	for _, call := range actualCalls {
-		cmd := strings.Split(call, " ")[0]
+		cmdSegs := strings.Split(call, " ")
+		cmd := cmdSegs[0]
+		if cmd == "--kubeconfig" {
+			cmd = cmdSegs[2]
+		}
 		used, isExpected := cmdMap[cmd]
 		require.True(t, isExpected, "unexpected kubectl call for %+v:\n  %s", args, call)
 		cmdMap[cmd] = true
@@ -153,19 +161,26 @@ func TestCLI(t *testing.T) {
 	}{
 		{[]string{"manifest", "somepkg"}, []string{"api-resources", "get"}},
 		{[]string{"manifest", "somepkg", "-n", "myns"}, []string{"api-resources", "get"}},
+		{[]string{"manifest", "somepkg", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get"}},
 		{[]string{"apply", "-f", "../model/test"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, []string{"apply", "rollout", "wait"}},
+		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"apply", "-k", "../model/test/kustomize"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, []string{"apply", "rollout", "wait"}},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, []string{"apply", "rollout", "wait"}},
 		{[]string{"delete", "-f", "../model/test"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test", "-n", "myns"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-f", "../model/test", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-k", "../model/test/kustomize"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-k", "../model/test/kustomize", "-n", "myns"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-k", "../model/test/kustomize", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
 		{[]string{"delete", "somepkg"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"delete", "somepkg", "-n", "myns"}, []string{"api-resources", "get", "delete", "wait"}},
+		{[]string{"delete", "somepkg", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"list"}, []string{"api-resources", "get"}},
 		{[]string{"list", "-n", "myns"}, []string{"api-resources", "get"}},
+		{[]string{"list", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get"}},
 		{[]string{"list", "--all-namespaces"}, []string{"api-resources", "get"}},
 	} {
 		assertKubectlCmdsUsed(t, c.args, c.expectedKubectlCmds, kubectlCallSets)
@@ -173,6 +188,7 @@ func TestCLI(t *testing.T) {
 }
 
 func testRun(t *testing.T, args []string) []byte {
+	kubeconfigFile = ""
 	sourceKustomize = ""
 	sourceFile = ""
 	namespace = ""

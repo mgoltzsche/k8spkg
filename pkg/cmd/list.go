@@ -35,7 +35,7 @@ var (
 				return errors.New("no arguments supported")
 			}
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager()
+			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
 			pkgs, err := apiManager.List(ctx, allNamespaces, namespace)
 			if err != nil {
 				return
