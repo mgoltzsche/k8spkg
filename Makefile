@@ -34,6 +34,9 @@ build: golang-image
 k8spkg:
 	go build -a -ldflags '-s -w -extldflags "-static" $(LDFLAGS)' -tags '$(BUILDTAGS)' .
 
+install:
+	cp k8spkg /usr/local/bin/
+
 test:
 	go test -coverprofile coverage.out -cover ./...
 

@@ -40,12 +40,16 @@ var (
 				return apiManager.Delete(ctx, namespace, args[0])
 			}
 			// Delete provided objects
-			pkg, err := sourcePackage(ctx)
+			reader, err := sourceReader(ctx)
+			if err != nil {
+				return
+			}
+			obj, err := k8spkg.TransformedObjects(reader, namespace, "")
 			if err != nil {
 				return
 			}
 			// TODO: recover from wait error due to already removed object
-			return apiManager.DeleteObjects(ctx, pkg.Objects)
+			return apiManager.DeleteObjects(ctx, obj)
 		},
 	}
 )

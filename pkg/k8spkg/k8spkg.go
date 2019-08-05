@@ -12,15 +12,16 @@ import (
 	"github.com/pkg/errors"
 )
 
+// K8sPackage define a collection of objects and their package metadata
 type K8sPackage struct {
 	*PackageInfo
 	Objects []*model.K8sObject
 }
 
-func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage, err error) {
+// TransformedObjects read API objects from reader and modify their name and namespace if provided
+func TransformedObjects(reader io.Reader, namespace, name string) (obj []*model.K8sObject, err error) {
 	var namespaces []string
 	if namespace == "" {
-		var obj []*model.K8sObject
 		if obj, err = model.FromReader(reader); err != nil {
 			return
 		}
@@ -30,12 +31,20 @@ func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage,
 		namespaces = []string{namespace}
 	}
 	reader = manifest2pkgobjects(reader, namespace, name, namespaces)
-	obj, err := model.FromReader(reader)
+	obj, err = model.FromReader(reader)
 	if err != nil {
 		return nil, errors.Wrap(err, "manifest2pkg")
 	}
 	if len(obj) == 0 {
 		return nil, errors.New("no objects found in the provided manifest")
+	}
+	return
+}
+
+func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage, err error) {
+	obj, err := TransformedObjects(reader, namespace, name)
+	if err != nil {
+		return
 	}
 	pkgs, err := PackageInfosFromObjects(obj)
 	if err != nil {
@@ -44,7 +53,7 @@ func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage,
 	if len(pkgs) != 1 {
 		return nil, errors.Errorf("1 package expected but %d provided", len(pkgs))
 	}
-	return &K8sPackage{pkgs[0], obj}, err
+	return &K8sPackage{pkgs[0], obj}, nil
 }
 
 func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []string) io.Reader {
