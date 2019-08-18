@@ -31,14 +31,16 @@ func init() {
 // mock kubectl calls
 func mockKubectl() (err error) {
 	argStr := strings.Join(os.Args[1:], " ")
-	kubectlCallFile := os.Getenv("K8SPKGTEST_CALLS")
+
 	// track kubectl call
+	kubectlCallFile := os.Getenv("K8SPKGTEST_CALLS")
 	f, err := os.OpenFile(kubectlCallFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\n", argStr)
+
+	stdinLen := 0
 	out := ""
 	strippedArgs := os.Args[1:]
 	if strippedArgs[0] == "--kubeconfig" {
@@ -53,14 +55,38 @@ deployments                       deploy       extensions                     tr
 customresourcedefinitions         crd,crds     apiextensions.k8s.io           false        CustomResourceDefinition`
 	case "get":
 		out = `
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/part-of: somepkg
+  name: cert-manager-webhook
+  namespace: cert-manager
+status:
+  conditions:
+  - status: "True"
+    type: Available
+---
 apiVersion: certmanager.k8s.io/v1alpha1
 kind: Issuer
 metadata:
-    name: ca-issuer
-    lamespace: cert-manager
-    labels:
-        app.kubernetes.io/part-of: somepkg`
+  name: ca-issuer
+  lamespace: cert-manager
+  labels:
+    app.kubernetes.io/part-of: somepkg
+status:
+  conditions:
+  - status: "True"
+    type: Ready`
+	case "apply":
+		var b []byte
+		b, err = ioutil.ReadAll(os.Stdin)
+		if err == nil {
+			stdinLen = len(b)
+		}
 	}
+	fmt.Fprintf(f, "%d %s\n", stdinLen, argStr)
 	fmt.Println(out)
 	return
 }
@@ -89,23 +115,25 @@ func assertKubectlCmdsUsed(t *testing.T, args, expectedCmds []string, callMap ma
 	actualCmds := []string{}
 	for _, call := range actualCalls {
 		cmdSegs := strings.Split(call, " ")
-		cmd := cmdSegs[0]
+		cmd := cmdSegs[1]
 		if cmd == "--kubeconfig" {
-			cmd = cmdSegs[2]
+			cmd = cmdSegs[3]
 		}
 		used, isExpected := cmdMap[cmd]
-		require.True(t, isExpected, "unexpected kubectl call for %+v:\n  %s", args, call)
+		require.True(t, isExpected, "unexpected kubectl cmd %q used by %+v:\n  %s", cmd, args, call)
 		cmdMap[cmd] = true
 		if !used {
 			actualCmds = append(actualCmds, cmd)
 		}
 	}
+	require.Equal(t, expectedCmds, actualCmds, "used commands of %+v", args)
+
+	// Check for unused options - different calls that result in same kubectl calls
 	callsStr := strings.Join(actualCalls, "\n")
 	argsStr := strings.Join(args, " ")
 	prevTesteeCall, duplicateCallSet := callMap[callsStr]
 	require.False(t, duplicateCallSet, "calls resulted in same kubectl calls:\n  %s\n  %s\n\nkubectl calls:\n  %s", prevTesteeCall, argsStr, strings.ReplaceAll(callsStr, "\n", "\n  "))
 	callMap[callsStr] = argsStr
-	require.Equal(t, expectedCmds, actualCmds, "used commands of %+v", args)
 }
 
 func trackedKubectlCalls(kubectlCallFile string) (calls []string, err error) {
@@ -155,6 +183,7 @@ func TestManifest(t *testing.T) {
 
 func TestCLI(t *testing.T) {
 	kubectlCallSets := map[string]string{}
+	applyKubectlCmds := []string{"apply", "get", "rollout", "wait"}
 	for _, c := range []struct {
 		args                []string
 		expectedKubectlCmds []string
@@ -162,14 +191,14 @@ func TestCLI(t *testing.T) {
 		{[]string{"manifest", "somepkg"}, []string{"api-resources", "get"}},
 		{[]string{"manifest", "somepkg", "-n", "myns"}, []string{"api-resources", "get"}},
 		{[]string{"manifest", "somepkg", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get"}},
-		{[]string{"apply", "-f", "../model/test"}, []string{"apply", "rollout", "wait"}},
-		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, []string{"apply", "rollout", "wait"}},
-		{[]string{"apply", "-f", "../model/test/manifestdir", "-n", "myns", "--name", "renamedpkg"}, []string{"apply"}},
-		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, []string{"apply", "rollout", "wait"}},
-		{[]string{"apply", "-k", "../model/test/kustomize"}, []string{"apply", "rollout", "wait"}},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, []string{"apply", "rollout", "wait"}},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, []string{"apply", "rollout", "wait"}},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, []string{"apply", "rollout", "wait"}},
+		{[]string{"apply", "-f", "../model/test"}, applyKubectlCmds},
+		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, applyKubectlCmds},
+		{[]string{"apply", "-f", "../model/test/manifestdir", "-n", "myns", "--name", "renamedpkg"}, applyKubectlCmds},
+		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlCmds},
+		{[]string{"apply", "-k", "../model/test/kustomize"}, applyKubectlCmds},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, applyKubectlCmds},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, applyKubectlCmds},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlCmds},
 		{[]string{"delete", "-f", "../model/test"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test/manifestdir"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test", "-n", "myns"}, []string{"delete", "wait"}},

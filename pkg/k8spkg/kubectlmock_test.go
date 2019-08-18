@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,6 +82,8 @@ metadata:
 		err = printFile("../model/test/contained-pod-rs.yaml")
 	case kubectlGetCallNsCertManager:
 		err = printFile("../model/test/kustomize/mycert.yaml")
+	case kubectlGetObjStatusCall:
+		err = printFile("../model/test/status/k8sobjectlist-status.yaml")
 	case kubectlListCall:
 		err = printFile("../model/test/k8sobjectlist.yaml")
 		err = printFile("../model/test/contained-pod-rs.yaml")
@@ -95,11 +96,13 @@ metadata:
 		err = printFile("../model/test/k8sobjectlist.yaml")
 		err = printFile("../model/test/contained-pod-rs.yaml")
 		fmt.Println(objInOtherNs)
-	case kubectlApplyCall:
+	case kubectlApplyCallPrune:
 		var f *os.File
 		if f, err = os.OpenFile(os.Getenv("K8SPKGTEST_STDIN"), os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 			defer f.Close()
-			_, err = io.Copy(f, os.Stdin)
+			if _, err = io.Copy(f, os.Stdin); err == nil {
+				err = printFile("../model/test/status/k8sobjectlist-status.yaml")
+			}
 		}
 	case kubectlResTypeCall:
 		fmt.Print(resTypeTable)
@@ -155,5 +158,5 @@ func assertKubectlCalls(t *testing.T, expectedCalls []string, errorAfterCall int
 	testee(stdinFile)
 	actualCalls, err := trackedKubectlCalls(kubectlCallFile)
 	require.NoError(t, err, "tracked kubectl calls")
-	assert.Equal(t, expectedCalls, actualCalls, "kubectl calls")
+	require.Equal(t, expectedCalls, actualCalls, "kubectl calls")
 }

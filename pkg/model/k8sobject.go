@@ -21,21 +21,31 @@ func WriteManifest(obj []*K8sObject, writer io.Writer) (err error) {
 type rawK8sObject map[string]interface{}
 
 type K8sObject struct {
-	raw        rawK8sObject
-	APIVersion string
-	Kind       string
-	Namespace  string
-	Name       string
+	raw            rawK8sObject
+	APIVersion     string
+	Kind           string
+	Namespace      string
+	Name           string
+	ConditionTypes []string
 }
 
 func FromMap(o map[string]interface{}) *K8sObject {
-	m := asMap(o["metadata"])
+	meta := asMap(o["metadata"])
+	conditions := asList(lookup(o, "status.conditions"))
+	conditionTypes := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		ct := asString(asMap(condition)["type"])
+		if ct != "" {
+			conditionTypes = append(conditionTypes, strings.ToLower(ct))
+		}
+	}
 	return &K8sObject{
-		raw:        o,
-		APIVersion: asString(o["apiVersion"]),
-		Kind:       asString(o["kind"]),
-		Namespace:  asString(m["namespace"]),
-		Name:       asString(m["name"]),
+		raw:            o,
+		APIVersion:     asString(o["apiVersion"]),
+		Kind:           asString(o["kind"]),
+		Namespace:      asString(meta["namespace"]),
+		Name:           asString(meta["name"]),
+		ConditionTypes: conditionTypes,
 	}
 }
 

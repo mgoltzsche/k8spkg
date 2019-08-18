@@ -20,7 +20,7 @@ func Render(o RenderOptions) (err error) {
 	ptf := transformimpl.NewFactoryImpl()
 	rf := resmap.NewFactory(resource.NewFactory(uf), ptf)
 	v := validator.NewKustValidator()
-	pl := plugins.NewLoader(plugins.DefaultPluginConfig(), rf)
+	pl := plugins.NewLoader(plugins.ActivePluginConfig(), rf)
 
 	loadRestrictor := loader.RestrictionRootOnly
 	if o.Unrestricted {

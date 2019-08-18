@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: List
+items:
+- apiVersion: apiextensions.k8s.io/v1beta1
+  kind: CustomResourceDefinition
+  metadata:
+    creationTimestamp: null
+    name: certificates.certmanager.k8s.io
+    labels:
+      app.kubernetes.io/part-of: somepkg
+      k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
+  # ...
+  spec:
+    group: certmanager.k8s.io
+    version: v1alpha1
+    names:
+      kind: Certificate
+  status:
+    conditions:
+    - type: NamesAccepted
+    - type: Established
+- apiVersion: v1
+  kind: Deployment
+  metadata:
+    creationTimestamp: "2019-06-02T00:57:37Z"
+    labels:
+      k8s-app: kube-dns
+      app.kubernetes.io/part-of: somepkg
+      k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
+    name: somedeployment
+    namespace: mynamespace
+  spec:
+    containers:
+    - args:
+      - echo Hello World
+      image: alpine:3.9
+      name: myapp
+      ports:
+      - containerPort: 53
+        name: dns
+        protocol: UDP
+    selector:
+      matchLabels:
+        app.kubernetes.io/part-of: somepkg
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: somepkg
+  status:
+    conditions:
+    - type: Available
+- apiVersion: v1
+  kind: List
+  items:
+  - apiVersion: v1
+    kind: APIService
+    metadata:
+      name: myapiservice
+      labels:
+        app.kubernetes.io/part-of: somepkg
+    spec:
+      asdf: asdg
+    status:
+      conditions:
+      - type: Available
+- apiVersion: v1
+  kind: Deployment
+  metadata:
+    name: mydeployment
+    namespace: mynamespace
+    labels:
+      app.kubernetes.io/part-of: somepkg
+  spec:
+    asdf: asdg
+  status:
+    conditions:
+    - type: Available
+---
+apiVersion: certmanager.k8s.io/v1alpha1
+kind: Certificate
+metadata:
+  name: onemorecert
+  namespace: cert-manager
+  labels:
+    app.kubernetes.io/part-of: somepkg
+spec:
+  secretName: onemorecert
+  duration: 7000h
+  issuerRef:
+    name: cert-manager-webhook-selfsign
+  commonName: "nested.cert"
+status:
+  conditions:
+  - lastTransitionTime: "2019-08-18T15:10:59Z"
+    message: Certificate is up to date and has not expired
+    reason: Ready
+    status: "True"
+    type: Ready
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    creationTimestamp: "2019-06-24T23:20:59Z"
+    generation: 1
+    labels:
+        app.kubernetes.io/part-of: somepkg
+    name: cert-manager-webhook
+    namespace: cert-manager
+    resourceVersion: "15233"
+    selfLink: /apis/apps/v1/namespaces/cert-manager/deployments/cert-manager-webhook
+    uid: b99471c0-96d6-11e9-bafd-0242a54f69f8
+spec:
+    progressDeadlineSeconds: 600
+    replicas: 1
+    revisionHistoryLimit: 2
+    selector:
+        matchLabels:
+            app: webhook
+            app.kubernetes.io/part-of: cert-manager
+            release: cert-manager
+    strategy:
+        rollingUpdate:
+            maxSurge: 25%
+            maxUnavailable: 25%
+        type: RollingUpdate
+    template:
+        metadata:
+            creationTimestamp: null
+            labels:
+                app: webhook
+                app.kubernetes.io/part-of: cert-manager
+                release: cert-manager
+        spec:
+            containers:
+              - args:
+                  - --v=12
+                  - --secure-port=6443
+                  - --tls-cert-file=/certs/tls.crt
+                  - --tls-private-key-file=/certs/tls.key
+                env:
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                        fieldRef:
+                            apiVersion: v1
+                            fieldPath: metadata.namespace
+                image: quay.io/jetstack/cert-manager-webhook:v0.7.2
+                imagePullPolicy: IfNotPresent
+                name: webhook
+                resources: {}
+                terminationMessagePath: /dev/termination-log
+                terminationMessagePolicy: File
+                volumeMounts:
+                  - mountPath: /certs
+                    name: certs
+            dnsPolicy: ClusterFirst
+            restartPolicy: Always
+            schedulerName: default-scheduler
+            securityContext: {}
+            serviceAccount: cert-manager-webhook
+            serviceAccountName: cert-manager-webhook
+            terminationGracePeriodSeconds: 30
+            volumes:
+              - name: certs
+                secret:
+                    defaultMode: 420
+                    secretName: cert-manager-webhook-webhook-tls
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2019-08-18T15:10:59Z"
+    lastUpdateTime: "2019-08-18T15:10:59Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1

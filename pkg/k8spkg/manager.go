@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/mgoltzsche/k8spkg/pkg/model"
@@ -76,7 +77,7 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 	}
 	for _, ns := range namespaces {
 		if ns != namespace {
-			if objects, err = m.kubectlGet(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
+			if objects, err = m.kubectlGetPkg(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
 				return
 			}
 			pkg.Objects = append(pkg.Objects, objects...)
@@ -101,7 +102,7 @@ func (m *PackageManager) objects(ctx context.Context, allNamespaces bool, namesp
 	for i, t := range resTypes {
 		typeNames[i] = t.FullName()
 	}
-	return m.kubectlGet(ctx, typeNames, allNamespaces, namespace, pkgName)
+	return m.kubectlGetPkg(ctx, typeNames, allNamespaces, namespace, pkgName)
 }
 
 func detectNamespace(namespace string, objects []*model.K8sObject) string {
@@ -125,7 +126,22 @@ func (m *PackageManager) List(ctx context.Context, allNamespaces bool, namespace
 	return
 }
 
-func (m *PackageManager) kubectlGet(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) kubectlGetPkg(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+	typeCsv := strings.Join(types, ",")
+	args := []string{typeCsv}
+	if pkgName != "" {
+		args = append(args, "-l", PKG_NAME_LABEL+"="+pkgName)
+	}
+	if allNamespaces && namespace != "" {
+		return nil, errors.Errorf("invalid arguments: allNamespaces=true and namespace set")
+	}
+	if allNamespaces {
+		args = append(args, "--all-namespaces")
+	}
+	return m.kubectlGet(ctx, namespace, args)
+}
+
+func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args []string) (objects []*model.K8sObject, err error) {
 	reader, writer := io.Pipe()
 	defer func() {
 		if e := reader.Close(); e != nil && err == nil {
@@ -143,20 +159,9 @@ func (m *PackageManager) kubectlGet(ctx context.Context, types []string, allName
 	c := newKubectlCmd(ctx, m.kubeconfigFile)
 	c.Stdout = writer
 	c.Stderr = os.Stderr
-	typeCsv := strings.Join(types, ",")
-	args := []string{"get", typeCsv}
-	if pkgName != "" {
-		args = append(args, "-l", PKG_NAME_LABEL+"="+pkgName)
-	}
-	args = append(args, "-o", "yaml")
+	args = append([]string{"get", "-o", "yaml"}, args...)
 	if namespace != "" {
 		args = append(args, "-n", namespace)
-	}
-	if allNamespaces && namespace != "" {
-		return nil, errors.Errorf("invalid arguments: allNamespaces=true and namespace set")
-	}
-	if allNamespaces {
-		args = append(args, "--all-namespaces")
 	}
 	err = c.Run(args...)
 	writer.Close()
@@ -169,7 +174,6 @@ func (m *PackageManager) kubectlGet(ctx context.Context, types []string, allName
 func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool) (err error) {
 	logrus.Infof("Applying package %s", pkg.Name)
 	reader := manifestReader(pkg.Objects)
-	defer reader.Close()
 	pkgLabel := PKG_NAME_LABEL + "=" + pkg.Name
 	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-", "--record"}
 	if prune {
@@ -178,17 +182,43 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 	}
 	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 	cmd.Stdin = reader
-	//cmd.Stdout = TODO: read output
 	err = cmd.Run(args...)
 	if e := reader.Close(); e != nil && err == nil {
 		err = e
 	}
 	if err == nil {
-		if err = m.awaitRollout(ctx, pkg.Objects); err == nil {
-			err = m.awaitAvailability(ctx, pkg.Objects)
+		var obj []*model.K8sObject
+		if obj, err = m.objectState(ctx, pkg.Objects); err == nil {
+			if err = m.awaitRollout(ctx, obj); err == nil {
+				err = m.awaitCondition(ctx, obj)
+			}
 		}
 	}
 	return errors.Wrapf(err, "apply package %s", pkg.Name)
+}
+
+func (m *PackageManager) objectState(ctx context.Context, obj []*model.K8sObject) (state []*model.K8sObject, err error) {
+	nsMap, nsOrder := groupByNamespace(obj)
+	for _, ns := range nsOrder {
+		ol := nsMap[ns]
+		args := make([]string, len(ol))
+		for i, o := range ol {
+			args[i] = strings.ToLower(o.Kind) + "/" + o.Name
+		}
+		ol, e := m.kubectlGet(ctx, ns, args)
+		if e == nil {
+			state = append(state, ol...)
+		} else if err == nil {
+			err = e
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+	}
+	return
 }
 
 func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObject) (err error) {
@@ -214,15 +244,28 @@ func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObjec
 	return
 }
 
-func (m *PackageManager) awaitAvailability(ctx context.Context, obj []*model.K8sObject) (err error) {
-	obj = filter(obj, func(o *model.K8sObject) bool {
-		return o.Kind == "Deployment" || o.Kind == "APIService" // TODO: add more
-	})
-	if len(obj) == 0 {
-		return nil
+func (m *PackageManager) awaitCondition(ctx context.Context, obj []*model.K8sObject) (err error) {
+	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
+	ctMap := map[string][]*model.K8sObject{}
+	keys := []string{}
+	for _, o := range obj {
+		for _, ct := range o.ConditionTypes {
+			ol := ctMap[ct]
+			if ol == nil {
+				keys = append(keys, ct)
+			}
+			ctMap[ct] = append(ol, o)
+		}
 	}
-	logrus.Debugf("Waiting for %d components to become available...", len(obj))
-	return kubectlWait(newKubectlCmd(ctx, m.kubeconfigFile), obj, "condition=available")
+	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
+	for _, ct := range keys {
+		ol := ctMap[ct]
+		logrus.Debugf("Waiting for %d components to become %s...", len(ol), ct)
+		if err = kubectlWait(cmd, ol, "condition="+ct); err != nil {
+			return
+		}
+	}
+	return
 }
 
 func kubectlWait(cmd *kubectlCmd, obj []*model.K8sObject, forExpr string) (err error) {

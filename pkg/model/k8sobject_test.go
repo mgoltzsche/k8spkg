@@ -29,6 +29,10 @@ spec:
   names:
     kind: akind
   version: aversion
+status:
+  conditions:
+  - type: Available
+  - type: SomeCondition
 `
 	obj := map[string]interface{}{}
 	err := yaml.Unmarshal([]byte(manifest), obj)
@@ -47,6 +51,7 @@ spec:
 	if assert.NotNil(t, o.Labels(), "labels") {
 		assert.Equal(t, "mypkg", o.Labels()["app.kubernetes.io/part-of"], "label")
 	}
+	assert.Equal(t, []string{"available", "somecondition"}, o.ConditionTypes, "condition types")
 
 	var buf bytes.Buffer
 	err = o.WriteYaml(&buf)

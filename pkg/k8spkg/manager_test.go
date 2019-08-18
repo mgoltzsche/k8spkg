@@ -12,9 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	kubectlApplyCall           = "apply --wait=true --timeout=2m -f - --record -l app.kubernetes.io/part-of=somepkg --prune"
-	kubectlApplyCallKubeconfig = "--kubeconfig kubeconfig.yaml " + kubectlApplyCall
+var (
+	testNamespace               = "myns"
+	kubectlGetCallPrfx          = "get -o yaml "
+	kubectlGetCall              = kubectlGetCallPrfx + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -n " + testNamespace
+	kubectlGetCallNsCertManager = "get -o yaml " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n cert-manager"
+	kubectlGetCallNsMynamespace = "get -o yaml " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n mynamespace"
+	kubectlGetCallNsEmpty       = "get -o yaml " + resTypesStr + " -l app.kubernetes.io/part-of=somepkg"
+
+	kubectlApplyCall           = "apply --wait=true --timeout=2m -f - --record"
+	kubectlApplyCallPrune      = kubectlApplyCall + " -l app.kubernetes.io/part-of=somepkg --prune"
+	kubectlApplyCallKubeconfig = "--kubeconfig kubeconfig.yaml " + kubectlApplyCallPrune
+	kubectlGetObjStatusCall    = kubectlGetCallPrfx + "customresourcedefinition/certificates.certmanager.k8s.io apiservice/myapiservice"
 )
 
 func TestPackageManagerApply(t *testing.T) {
@@ -27,10 +36,16 @@ func TestPackageManagerApply(t *testing.T) {
 	// Assert Apply()
 	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
 		expectedCalls := []string{
-			kubectlApplyCall,
+			kubectlApplyCallPrune,
+			kubectlGetObjStatusCall,
+			kubectlGetCallPrfx + "deployment/somedeployment deployment/mydeployment -n mynamespace",
+			kubectlGetCallPrfx + "certificate/onemorecert deployment/cert-manager-webhook -n cert-manager",
 			"rollout status -w --timeout=2m -n mynamespace deployment/somedeployment",
 			"rollout status -w --timeout=2m -n mynamespace deployment/mydeployment",
 			"rollout status -w --timeout=2m -n cert-manager deployment/cert-manager-webhook",
+			"wait --for condition=ready --timeout=2m -n cert-manager certificate/onemorecert",
+			"wait --for condition=namesaccepted --timeout=2m customresourcedefinition/certificates.certmanager.k8s.io",
+			"wait --for condition=established --timeout=2m customresourcedefinition/certificates.certmanager.k8s.io",
 			"wait --for condition=available --timeout=2m -n mynamespace deployment/somedeployment deployment/mydeployment",
 			"wait --for condition=available --timeout=2m apiservice/myapiservice",
 			"wait --for condition=available --timeout=2m -n cert-manager deployment/cert-manager-webhook",
@@ -43,7 +58,7 @@ func TestPackageManagerApply(t *testing.T) {
 		assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(stdinFile string) {
 			testee := NewPackageManager(kubecfgFile)
 			err = testee.Apply(context.Background(), pkg, true)
-			require.NoError(t, err, "Apply()")
+			assert.NoError(t, err, "Apply()")
 
 			// Assert applied content is complete
 			expected, err := model.FromReader(bytes.NewReader(b))
@@ -59,19 +74,13 @@ func TestPackageManagerApply(t *testing.T) {
 	}
 
 	// Assert prune option and kubectl error are passed through
-	expectedCalls := []string{"apply --wait=true --timeout=2m -f - --record"}
+	expectedCalls := []string{kubectlApplyCall}
 	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
 		testee := NewPackageManager("")
 		err := testee.Apply(context.Background(), pkg, false)
 		require.Error(t, err, "Apply() should pass through kubectl error")
 	})
 }
-
-var testNamespace = "myns"
-var kubectlGetCall = "get " + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml -n " + testNamespace
-var kubectlGetCallNsCertManager = "get " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml -n cert-manager"
-var kubectlGetCallNsMynamespace = "get " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml -n mynamespace"
-var kubectlGetCallNsEmpty = "get " + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -o yaml"
 
 func TestPackageManagerState(t *testing.T) {
 	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
@@ -169,9 +178,9 @@ func TestPackageManagerDelete(t *testing.T) {
 	}
 }
 
-var kubectlListCall = "get " + resTypesStr + " -o yaml -n " + testNamespace
-var kubectlListCallNsEmpty = "get " + resTypesStr + " -o yaml"
-var kubectlListCallAllNamespaces = "get " + resTypesStr + " -o yaml --all-namespaces"
+var kubectlListCall = "get -o yaml " + resTypesStr + " -n " + testNamespace
+var kubectlListCallNsEmpty = "get -o yaml " + resTypesStr
+var kubectlListCallAllNamespaces = "get -o yaml " + resTypesStr + " --all-namespaces"
 
 func TestPackageManagerList(t *testing.T) {
 	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
