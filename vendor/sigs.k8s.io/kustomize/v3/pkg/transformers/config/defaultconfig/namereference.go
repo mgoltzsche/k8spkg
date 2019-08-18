@@ -272,10 +272,10 @@ nameReference:
   - path: spec/service/name
     kind: APIService
     group: apiregistration.k8s.io
-  - path: webhooks/clientConfig/service/name
+  - path: webhooks/clientConfig/service
     kind: ValidatingWebhookConfiguration
     group: admissionregistration.k8s.io
-  - path: webhooks/clientConfig/service/name
+  - path: webhooks/clientConfig/service
     kind: MutatingWebhookConfiguration
     group: admissionregistration.k8s.io
 
@@ -299,10 +299,10 @@ nameReference:
 - kind: ServiceAccount
   version: v1
   fieldSpecs:
-  - path: subjects/name
+  - path: subjects
     kind: RoleBinding
     group: rbac.authorization.k8s.io
-  - path: subjects/name
+  - path: subjects
     kind: ClusterRoleBinding
     group: rbac.authorization.k8s.io
   - path: spec/serviceAccountName
@@ -343,6 +343,8 @@ nameReference:
   fieldSpecs:
   - path: spec/volumeName
     kind: PersistentVolumeClaim
+  - path: rules/resourceNames
+    kind: ClusterRole
 
 - kind: StorageClass
   version: v1
@@ -352,5 +354,7 @@ nameReference:
     kind: PersistentVolume
   - path: spec/storageClassName
     kind: PersistentVolumeClaim
+  - path: spec/volumeClaimTemplates/spec/storageClassName
+    kind: StatefulSet
 `
 )

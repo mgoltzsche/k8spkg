@@ -69,6 +69,11 @@ func (fs *UnstructAdapter) GetGvk() gvk.Gvk {
 	}
 }
 
+// SetGvk set the Gvk of the object to the input Gvk
+func (fs *UnstructAdapter) SetGvk(g gvk.Gvk) {
+	fs.SetGroupVersionKind(toSchemaGvk(g))
+}
+
 // Copy provides a copy behind an interface.
 func (fs *UnstructAdapter) Copy() ifc.Kunstructured {
 	return &UnstructAdapter{*fs.DeepCopy()}
@@ -333,7 +338,11 @@ func (fs *UnstructAdapter) Patch(patch ifc.Kunstructured) error {
 		}
 	}
 	fs.SetMap(merged)
-	fs.SetName(saveName)
+	if len(fs.Map()) != 0 {
+		// if the patch deletes the object
+		// don't reset the name
+		fs.SetName(saveName)
+	}
 	return nil
 }
 

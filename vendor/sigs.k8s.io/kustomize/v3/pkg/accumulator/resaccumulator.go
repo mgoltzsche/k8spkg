@@ -64,8 +64,14 @@ func (ra *ResAccumulator) GetTransformerConfig() *config.TransformerConfig {
 
 func (ra *ResAccumulator) MergeVars(incoming []types.Var) error {
 	for _, v := range incoming {
-		matched := ra.resMap.GetMatchingResourcesByOriginalId(
-			resid.NewResId(v.ObjRef.GVK(), v.ObjRef.Name).GvknEquals)
+		targetId := resid.NewResIdWithNamespace(v.ObjRef.GVK(), v.ObjRef.Name, v.ObjRef.Namespace)
+		idMatcher := targetId.GvknEquals
+		if targetId.Namespace != "" || !targetId.IsNamespaceableKind() {
+			// Preserve backward compatibility. An empty namespace means
+			// wildcard search on the namespace hence we still use GvknEquals
+			idMatcher = targetId.Equals
+		}
+		matched := ra.resMap.GetMatchingResourcesByOriginalId(idMatcher)
 		if len(matched) > 1 {
 			return fmt.Errorf(
 				"found %d resId matches for var %s "+
