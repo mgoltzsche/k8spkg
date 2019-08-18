@@ -15,7 +15,7 @@ import (
 )
 
 // Provides a reader for the given manifest dir or URL.
-func ManifestReader(ctx context.Context, src, baseDir string) (reader io.Reader) {
+func ManifestReader(ctx context.Context, src, baseDir string) (reader io.ReadCloser) {
 	reader, writer := io.Pipe()
 	go func() {
 		writer.CloseWithError(copySourceFiles(ctx, src, baseDir, writer))

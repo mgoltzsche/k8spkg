@@ -169,6 +169,7 @@ func (m *PackageManager) kubectlGet(ctx context.Context, types []string, allName
 func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool) (err error) {
 	logrus.Infof("Applying package %s", pkg.Name)
 	reader := manifestReader(pkg.Objects)
+	defer reader.Close()
 	pkgLabel := PKG_NAME_LABEL + "=" + pkg.Name
 	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-", "--record"}
 	if prune {
@@ -177,6 +178,7 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 	}
 	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 	cmd.Stdin = reader
+	//cmd.Stdout = TODO: read output
 	err = cmd.Run(args...)
 	if e := reader.Close(); e != nil && err == nil {
 		err = e

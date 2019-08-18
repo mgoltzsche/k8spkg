@@ -96,10 +96,11 @@ func sourcePackage(ctx context.Context) (pkg *k8spkg.K8sPackage, err error) {
 	if err == nil {
 		pkg, err = k8spkg.PkgFromManifest(reader, namespace, pkgName)
 	}
+	reader.Close()
 	return
 }
 
-func sourceReader(ctx context.Context) (io.Reader, error) {
+func sourceReader(ctx context.Context) (io.ReadCloser, error) {
 	if sourceKustomize != "" && sourceFile != "" {
 		return nil, errors.New("options -f and -k are mutually exclusive but both provided")
 	}
@@ -111,7 +112,7 @@ func sourceReader(ctx context.Context) (io.Reader, error) {
 	return nil, errors.New("no source: none of option -f or -k provided")
 }
 
-func renderKustomize(source string) (reader io.Reader, err error) {
+func renderKustomize(source string) (reader io.ReadCloser, err error) {
 	reader, writer := io.Pipe()
 	go func() {
 		err := kustomize.Render(kustomize.RenderOptions{
@@ -123,9 +124,9 @@ func renderKustomize(source string) (reader io.Reader, err error) {
 	return reader, nil
 }
 
-func fileReader(ctx context.Context, source string) (reader io.Reader, err error) {
+func fileReader(ctx context.Context, source string) (reader io.ReadCloser, err error) {
 	if source == "-" { // read stdin
-		reader = os.Stdin
+		reader = &noopReadCloser{os.Stdin}
 	} else { // read file/dir
 		var baseDir string
 		if baseDir, err = os.Getwd(); err != nil {
@@ -134,4 +135,12 @@ func fileReader(ctx context.Context, source string) (reader io.Reader, err error
 		reader = model.ManifestReader(ctx, source, baseDir)
 	}
 	return
+}
+
+type noopReadCloser struct {
+	io.Reader
+}
+
+func (r *noopReadCloser) Close() error {
+	return nil // do nothing, keep stdin open
 }

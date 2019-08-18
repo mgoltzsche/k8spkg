@@ -26,12 +26,15 @@ func TransformedObjects(reader io.Reader, namespace, name string) (obj []*model.
 			return
 		}
 		namespaces = containedNamespaces(obj)
-		reader = manifestReader(obj)
+		readCloser := manifestReader(obj)
+		reader = readCloser
+		defer readCloser.Close()
 	} else {
 		namespaces = []string{namespace}
 	}
-	reader = manifest2pkgobjects(reader, namespace, name, namespaces)
-	obj, err = model.FromReader(reader)
+	transformed := manifest2pkgobjects(reader, namespace, name, namespaces)
+	defer transformed.Close()
+	obj, err = model.FromReader(transformed)
 	if err != nil {
 		return nil, errors.Wrap(err, "manifest2pkg")
 	}
@@ -56,17 +59,19 @@ func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage,
 	return &K8sPackage{pkgs[0], obj}, nil
 }
 
-func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []string) io.Reader {
+func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []string) io.ReadCloser {
 	if namespace == "" && name == "" && len(namespaces) == 0 {
-		return reader
+		return &noopReadCloser{reader}
 	}
 	pReader, pWriter := io.Pipe()
 	go func() {
 		err := transform.Transform(pWriter, func(tmpDir string) (tOpt *transform.TransformOptions, err error) {
-			var f *os.File
-			if f, err = os.OpenFile(filepath.Join(tmpDir, "manifest.yaml"), os.O_CREATE|os.O_WRONLY, 0600); err == nil {
-				_, err = io.Copy(f, reader)
+			f, err := os.OpenFile(filepath.Join(tmpDir, "manifest.yaml"), os.O_CREATE|os.O_WRONLY, 0600)
+			if err != nil {
+				return
 			}
+			defer f.Close()
+			_, err = io.Copy(f, reader)
 			labels := map[string]string{
 				"app.kubernetes.io/managed-by": "k8spkg",
 			}
@@ -97,4 +102,12 @@ func containedNamespaces(obj []*model.K8sObject) (ns []string) {
 	}
 	sort.Strings(ns)
 	return
+}
+
+type noopReadCloser struct {
+	io.Reader
+}
+
+func (r *noopReadCloser) Close() error {
+	return nil // do nothing
 }

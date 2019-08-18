@@ -44,6 +44,7 @@ var (
 			if err != nil {
 				return
 			}
+			defer reader.Close()
 			obj, err := k8spkg.TransformedObjects(reader, namespace, "")
 			if err != nil {
 				return
