@@ -54,8 +54,8 @@ func Execute() {
 func init() {
 	//cobra.OnInitialize(initConfig)
 	//rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.k8spkg.yaml)")
-	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Enable debug log")
-	rootCmd.PersistentFlags().StringVar(&kubeconfigFile, "kubeconfig", "", "Use a particular kubeconfig.yaml")
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug log")
+	rootCmd.PersistentFlags().StringVar(&kubeconfigFile, "kubeconfig", "", "use a particular kubeconfig.yaml")
 }
 
 /*

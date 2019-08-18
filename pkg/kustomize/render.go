@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/kustomize/v3/pkg/resmap"
 	"sigs.k8s.io/kustomize/v3/pkg/resource"
 	"sigs.k8s.io/kustomize/v3/pkg/target"
+	"sigs.k8s.io/kustomize/v3/pkg/types"
 )
 
 func Render(o RenderOptions) (err error) {
@@ -20,7 +21,13 @@ func Render(o RenderOptions) (err error) {
 	ptf := transformimpl.NewFactoryImpl()
 	rf := resmap.NewFactory(resource.NewFactory(uf), ptf)
 	v := validator.NewKustValidator()
-	pl := plugins.NewLoader(plugins.ActivePluginConfig(), rf)
+	var pluginCfg *types.PluginConfig
+	if o.EnableAlphaPlugins {
+		pluginCfg = plugins.ActivePluginConfig()
+	} else {
+		pluginCfg = plugins.DefaultPluginConfig()
+	}
+	pl := plugins.NewLoader(pluginCfg, rf)
 
 	loadRestrictor := loader.RestrictionRootOnly
 	if o.Unrestricted {

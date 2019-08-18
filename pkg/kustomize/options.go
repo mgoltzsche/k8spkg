@@ -5,7 +5,8 @@ import (
 )
 
 type RenderOptions struct {
-	Source       string
-	Out          io.Writer
-	Unrestricted bool
+	Source             string
+	Out                io.Writer
+	Unrestricted       bool
+	EnableAlphaPlugins bool
 }

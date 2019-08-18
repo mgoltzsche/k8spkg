@@ -33,11 +33,12 @@ import (
 )
 
 var (
-	timeout         time.Duration
-	namespace       string
-	sourceKustomize string
-	sourceFile      string
-	pkgName         string
+	timeout            time.Duration
+	namespace          string
+	sourceKustomize    string
+	sourceFile         string
+	pkgName            string
+	enableAlphaPlugins bool
 )
 
 func addRequestFlags(f *pflag.FlagSet) {
@@ -49,6 +50,7 @@ func addSourceFlags(f *pflag.FlagSet) {
 	addRequestFlags(f)
 	f.StringVarP(&sourceFile, "file", "f", "", "Load manifest from file or URL")
 	f.StringVarP(&sourceKustomize, "kustomize", "k", "", "Load manifest from rendered kustomize source")
+	f.BoolVar(&enableAlphaPlugins, "enable_alpha_plugins", false, "enable kustomize plugins (alpha feature)")
 }
 
 func addSourceNameFlags(f *pflag.FlagSet) {
@@ -116,8 +118,9 @@ func renderKustomize(source string) (reader io.ReadCloser, err error) {
 	reader, writer := io.Pipe()
 	go func() {
 		err := kustomize.Render(kustomize.RenderOptions{
-			Source: source,
-			Out:    writer,
+			Source:             source,
+			Out:                writer,
+			EnableAlphaPlugins: enableAlphaPlugins,
 		})
 		writer.CloseWithError(err)
 	}()
