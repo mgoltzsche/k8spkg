@@ -158,7 +158,8 @@ func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args 
 	}()
 	c := newKubectlCmd(ctx, m.kubeconfigFile)
 	c.Stdout = writer
-	c.Stderr = os.Stderr
+	var buf bytes.Buffer
+	c.Stderr = &buf
 	args = append([]string{"get", "-o", "yaml"}, args...)
 	if namespace != "" {
 		args = append(args, "-n", namespace)
@@ -167,6 +168,10 @@ func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args 
 	writer.Close()
 	if e := <-errc; e != nil && err == nil {
 		err = e
+	}
+	stderr := buf.String()
+	if err != nil && len(stderr) > 0 {
+		err = errors.Errorf("%s, stderr: %s", err, strings.ReplaceAll(stderr, "\n", "\n  "))
 	}
 	return
 }
@@ -324,16 +329,7 @@ func (m *PackageManager) Delete(ctx context.Context, namespace, pkgName string) 
 	if err != nil {
 		return
 	}
-	if err = m.DeleteObjects(ctx, pkg.Objects); err != nil {
-		// Workaround to exit successfully in case `kubectl wait` did not find an already deleted resource.
-		// This should be solved within kubectl so that it does not exit with an error when waiting for deletion of a deleted resource.
-		pkg, e := m.State(ctx, namespace, pkgName)
-		if e == nil {
-			err = errors.Errorf("leftover resources: %s", strings.Join(names(pkg.Objects), ", "))
-		} else if IsNotFound(e) {
-			err = nil
-		}
-	}
+	err = m.DeleteObjects(ctx, pkg.Objects)
 	return errors.Wrapf(err, "delete package %s", pkgName)
 }
 
@@ -348,6 +344,7 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 	namespaced := filter(obj, func(o *model.K8sObject) bool { return o.Namespace != "" && !fqnMap[o.ID()] })
 	mapFqns(namespaced, fqnMap)
 	other := filter(obj, func(o *model.K8sObject) bool { return !fqnMap[o.ID()] })
+	orphanObj := []*model.K8sObject{}
 
 	deletionOrder := [][]*model.K8sObject{
 		crdRes,
@@ -356,6 +353,7 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 		crds,
 	}
 
+	var waitErr error
 	for _, items := range deletionOrder {
 		nsMap, nsOrder := groupByNamespace(items)
 		for _, ns := range nsOrder {
@@ -374,18 +372,21 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
-			if e := kubectlWaitNames(cmd, ns, names(nsMap[ns]), "delete"); e != nil && err == nil {
-				// TODO: check if objects still exist to resolve error
-				msg := e.Error()
-				sout := stdout.String()
-				serr := stderr.String()
-				if sout != "" {
-					msg += ", stdout: " + sout
+			ol := nsMap[ns]
+			if e := kubectlWaitNames(cmd, ns, names(ol), "delete"); e != nil {
+				orphanObj = append(orphanObj, ol...)
+				if waitErr == nil {
+					msg := e.Error()
+					sout := stdout.String()
+					serr := stderr.String()
+					if sout != "" {
+						msg += ", stdout: " + sout
+					}
+					if serr != "" {
+						msg += ", stderr: " + serr
+					}
+					waitErr = errors.New(msg)
 				}
-				if serr != "" {
-					msg += ", stderr: " + serr
-				}
-				err = errors.New(msg)
 			}
 			select {
 			case <-ctx.Done():
@@ -394,6 +395,15 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 			}
 		}
 	}
+	if err == nil && waitErr != nil {
+		// Workaround to exit successfully in case `kubectl wait` did not find an already deleted resource.
+		// This should be solved within kubectl so that it does not exit with an error when waiting for deletion of a deleted resource.
+		orphanObj, _ = m.objectState(ctx, orphanObj)
+		if len(orphanObj) != 0 {
+			err = errors.Errorf("%d/%d objects could not be deleted: %+v", len(obj)-len(orphanObj), len(obj), names(orphanObj))
+		}
+	}
+
 	return
 }
 

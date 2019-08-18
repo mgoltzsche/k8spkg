@@ -146,9 +146,11 @@ func TestPackageManagerDelete(t *testing.T) {
 			"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true customresourcedefinition/certificates.certmanager.k8s.io",
 			"wait --for delete --timeout=2m customresourcedefinition/certificates.certmanager.k8s.io",
 		}
+		kubecfgOpt := ""
 		if kubecfgFile != "" {
+			kubecfgOpt = "--kubeconfig " + kubecfgFile + " "
 			for i, call := range expectedCalls {
-				expectedCalls[i] = "--kubeconfig " + kubecfgFile + " " + call
+				expectedCalls[i] = kubecfgOpt + call
 			}
 		}
 		// successful deletion
@@ -170,10 +172,15 @@ func TestPackageManagerDelete(t *testing.T) {
 			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when cluster state retrieval fails")
 		})
 		// kubectl error during deletion should still attempt to delete other resources
-		expectedCalls = append(expectedCalls, expectedCalls[0])
-		assertKubectlCalls(t, expectedCalls, 4, func(_ string) {
+		assertKubectlCalls(t, expectedCalls, 5, func(_ string) {
 			testee := NewPackageManager(kubecfgFile)
-			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"))
+			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "kubectl error during deletion should still attempt to delete other resources")
+		})
+		// kubectl error while awaiting deletion should be resolved by attempting to lookup objects
+		expectedCalls = append(expectedCalls, kubecfgOpt+"get -o yaml customresourcedefinition/certificates.certmanager.k8s.io")
+		assertKubectlCalls(t, expectedCalls, len(expectedCalls)-2, func(_ string) {
+			testee := NewPackageManager(kubecfgFile)
+			require.NoError(t, testee.Delete(context.Background(), "myns", "somepkg"), "kubectl error while awaiting deletion should be resolved by attempting to lookup objects")
 		})
 	}
 }
