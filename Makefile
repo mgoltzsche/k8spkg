@@ -66,17 +66,24 @@ coverage-report: golang-image
 	firefox coverage.html
 
 vendor-update: golang-image
-	$(DOCKERRUN) -e GO111MODULE=on $(GOIMAGE) go mod vendor
+	mkdir -p .build-cache
+	$(DOCKERRUN) -e GO111MODULE=on \
+		--mount "type=bind,src=$(shell pwd)/.build-cache,dst=/go" \
+		$(GOIMAGE) go mod vendor
 
 golang-image:
 	echo "$$GODOCKERFILE" | docker build --force-rm -t $(GOIMAGE) -
 
 ide:
+	mkdir -p .build-cache
 	docker run -d --name liteide-k8spkg --rm \
 		-e DISPLAY="$(shell echo $$DISPLAY)" \
 		-e CHUSR=$(shell id -u):$(shell id -g) \
+		-e GO111MODULE=on \
+		-e GOFLAGS=' ' \
 		--mount type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix \
 		--mount type=bind,src=/etc/machine-id,dst=/etc/machine-id \
-		--mount "type=bind,src=$(shell pwd),dst=/go/$(PKG)" \
+		--mount "type=bind,src=$(shell pwd)/.build-cache,dst=/go" \
+		--mount "type=bind,src=$(shell pwd),dst=/go/src/$(PKG)" \
 		"$(LITEIDEIMAGE)" \
-		"/go/$(PKG)"
+		"/go/src/$(PKG)"
