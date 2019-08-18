@@ -34,6 +34,7 @@ var rootCmd = &cobra.Command{
 	Short:            "Manages kubernetes API objects in packages",
 	Long:             "Manages kubernetes API objects in packages",
 	PersistentPreRun: applyLogLevel,
+	SilenceUsage:     true,
 }
 
 func applyLogLevel(cmd *cobra.Command, args []string) {
