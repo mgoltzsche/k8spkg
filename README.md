@@ -14,7 +14,7 @@ like kubectl.
 
 - Maintain a group of Kubernetes API objects generically as "package" using [labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/) (`app.kubernetes.io/part-of`, `k8spkg.mgoltzsche.github.com/namespaces`).
 - Add common labels to a manifest's API objects (using [kustomize](https://github.com/kubernetes-sigs/kustomize)).
-- Rollout a manifest/package as single deployment unit: Wait for the contained Deployments, Services and APIServices to become available.
+- Wait for API object's conditions (ready, available, ...) of a manifest.
 - List installed packages: Packages are visible within their API objects' namespace(s) only as long as they don't have global API objects as well.
 - Delete API objects by package name or source and wait until they are deleted.
 - [kustomization](https://github.com/kubernetes-sigs/kustomize) source support.
