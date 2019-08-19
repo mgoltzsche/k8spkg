@@ -95,10 +95,11 @@ func lookupPackage(ctx context.Context, args []string, pkgManager *k8spkg.Packag
 
 func sourcePackage(ctx context.Context) (pkg *k8spkg.K8sPackage, err error) {
 	reader, err := sourceReader(ctx)
-	if err == nil {
-		pkg, err = k8spkg.PkgFromManifest(reader, namespace, pkgName)
+	if err != nil {
+		return
 	}
-	reader.Close()
+	defer reader.Close()
+	pkg, err = k8spkg.PkgFromManifest(reader, namespace, pkgName)
 	return
 }
 

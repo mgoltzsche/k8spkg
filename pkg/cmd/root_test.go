@@ -14,6 +14,7 @@ import (
 
 	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,26 +93,12 @@ status:
 }
 
 func assertKubectlCmdsUsed(t *testing.T, args, expectedCmds []string, callMap map[string]string) {
-	tmpBin, err := ioutil.TempDir("", "k8spkg-test-")
+	_, actualCalls, err := testRun(t, args)
 	require.NoError(t, err)
-	kubectlCallFile := filepath.Join(tmpBin, filepath.Base(tmpBin)+"-calls")
-	defer os.RemoveAll(tmpBin)
-	err = os.Symlink("/proc/self/exe", filepath.Join(tmpBin, "kubectl"))
-	require.NoError(t, err)
-	err = os.Setenv("PATH", tmpBin+string(filepath.ListSeparator)+os.Getenv("PATH"))
-	require.NoError(t, err)
-	err = os.Setenv("K8SPKGTEST_CALLS", kubectlCallFile)
-	require.NoError(t, err)
-	defer func() {
-		os.Unsetenv("K8SPKGTEST_CALLS")
-	}()
-	testRun(t, args)
 	cmdMap := map[string]bool{}
 	for _, cmd := range expectedCmds {
 		cmdMap[cmd] = false
 	}
-	actualCalls, err := trackedKubectlCalls(kubectlCallFile)
-	require.NoError(t, err, "tracked kubectl calls of %+v", args)
 	actualCmds := []string{}
 	for _, call := range actualCalls {
 		cmdSegs := strings.Split(call, " ")
@@ -136,22 +123,6 @@ func assertKubectlCmdsUsed(t *testing.T, args, expectedCmds []string, callMap ma
 	callMap[callsStr] = argsStr
 }
 
-func trackedKubectlCalls(kubectlCallFile string) (calls []string, err error) {
-	f, err := os.Open(kubectlCallFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil
-		}
-		return
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		calls = append(calls, scanner.Text())
-	}
-	return
-}
-
 func TestManifest(t *testing.T) {
 	srv := httptest.NewServer(http.FileServer(http.Dir("..")))
 	addr := srv.Listener.Addr().String()
@@ -167,7 +138,8 @@ func TestManifest(t *testing.T) {
 		{"kustomizedpkg", 2, []string{"manifest", "-k", "../model/test/kustomize"}},
 		{"remoteFile", 2, []string{"manifest", "-f", "http://" + addr + "/model/test/manifestdir/some-cert.yaml", "--name", "remoteFile"}},
 	} {
-		out := testRun(t, c.args)
+		out, _, err := testRun(t, c.args)
+		require.NoError(t, err)
 		obj, err := model.FromReader(bytes.NewReader(out))
 		require.NoError(t, err, "FromReader(%s)", c.expectedPkgName)
 		require.Equal(t, c.expectedCount, len(obj), "%s object count", c.expectedPkgName)
@@ -218,7 +190,25 @@ func TestCLI(t *testing.T) {
 	}
 }
 
-func testRun(t *testing.T, args []string) []byte {
+func TestCLIErrorHandling(t *testing.T) {
+	for _, args := range [][]string{
+		{"manifest"},
+		{"manifest", "-n", "myns"},
+		{"apply"},
+		{"apply", "../model/test"},
+		{"apply", "../model/test", "-n", "myns"},
+		{"apply", "../model/test", "--name", "renamedpkg"},
+		{"apply", "../model/test", "-n", "myns", "--name", "renamedpkg"},
+		{"delete"},
+		{"list", "--all-namespaces", "-n", "myns"},
+	} {
+		_, _, err := testRun(t, args)
+		require.Error(t, err, "%+v", args)
+	}
+}
+
+func testRun(t *testing.T, args []string) (b []byte, actualCalls []string, err error) {
+	// reset state
 	kubeconfigFile = ""
 	sourceKustomize = ""
 	sourceFile = ""
@@ -227,9 +217,22 @@ func testRun(t *testing.T, args []string) []byte {
 	allNamespaces = false
 	prune = false
 
+	// create temp PATH dir to make kubectl cmd resolve to /proc/self/exe
+	tmpBin, err := ioutil.TempDir("", "k8spkg-test-bin-")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpBin)
+	err = os.Symlink("/proc/self/exe", filepath.Join(tmpBin, "kubectl"))
+	require.NoError(t, err)
+	err = os.Setenv("PATH", tmpBin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+	require.NoError(t, err)
+	kubectlCallFile := filepath.Join(tmpBin, "tracked-kubectl-calls")
+	err = os.Setenv("K8SPKGTEST_CALLS", kubectlCallFile)
+	require.NoError(t, err)
+	defer os.Unsetenv("K8SPKGTEST_CALLS")
+
 	os.Args = append([]string{"k8spkg"}, args...)
 	stdout := os.Stdout
-	f, err := ioutil.TempFile("", "k8spkg-stdout-")
+	f, err := ioutil.TempFile("", "k8spkg-test-stdout-")
 	require.NoError(t, err)
 	fileName := f.Name()
 	os.Stdout = f
@@ -239,9 +242,34 @@ func testRun(t *testing.T, args []string) []byte {
 		os.Remove(fileName)
 	}()
 	err = rootCmd.Execute()
-	require.NoError(t, err, "%+v", args)
+	if err != nil {
+		err = errors.Wrapf(err, "%+v", args)
+	}
 	f.Close()
-	b, err := ioutil.ReadFile(fileName)
-	require.NoError(t, err)
-	return b
+	if err == nil {
+		var e error
+		b, e = ioutil.ReadFile(fileName)
+		if e != nil {
+			panic(e)
+		}
+	}
+	actualCalls, e := trackedKubectlCalls(kubectlCallFile)
+	require.NoError(t, e, "tracked kubectl calls of %+v", args)
+	return
+}
+
+func trackedKubectlCalls(kubectlCallFile string) (calls []string, err error) {
+	f, err := os.Open(kubectlCallFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		calls = append(calls, scanner.Text())
+	}
+	return
 }
