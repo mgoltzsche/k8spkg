@@ -13,14 +13,14 @@ func TestPkgFromManifest(t *testing.T) {
 apiVersion: certmanager.k8s.io/v1alpha1
 kind: Issuer
 metadata:
-    name: ca-issuer
-    namespace: cert-manager
+  name: ca-issuer
+  namespace: cert-manager
 ---
 apiVersion: certmanager.k8s.io/v1alpha1
 kind: RoleBinding
 metadata:
-    name: ca-issuer
-    namespace: kube-system
+  name: ca-issuer
+  namespace: kube-system
 `
 	pkg, err := PkgFromManifest(bytes.NewReader([]byte(plainManifest)), "myns", "somepkg")
 	require.NoError(t, err)

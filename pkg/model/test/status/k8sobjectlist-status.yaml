@@ -18,7 +18,9 @@ items:
   status:
     conditions:
     - type: NamesAccepted
+      status: "True"
     - type: Established
+      status: "True"
 - apiVersion: v1
   kind: Deployment
   metadata:

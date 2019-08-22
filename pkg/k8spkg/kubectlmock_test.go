@@ -2,13 +2,17 @@ package k8spkg
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -26,34 +30,41 @@ func init() {
 // mock kubectl calls
 func mockKubectl() (err error) {
 	argStr := strings.Join(os.Args[1:], " ")
+	strippedArgs := os.Args[1:]
+	if strippedArgs[0] == "--kubeconfig" {
+		strippedArgs = strippedArgs[2:]
+	}
+	joinedArgs := strings.Join(strippedArgs, " ")
 	kubectlCallFile := os.Getenv("K8SPKGTEST_CALLS")
 
-	// Only allow provided expected mock calls provided with env
-	allowedCallsEnv := os.Getenv("K8SPKGTEST")
-	var allowedCalls []string
-	if allowedCallsEnv != "" {
-		allowedCalls = strings.Split(allowedCallsEnv, "\n")
-	}
-	calls, e := trackedKubectlCalls(kubectlCallFile)
-	if e != nil {
-		return e
-	}
-	if len(allowedCalls) <= len(calls) {
-		err = fmt.Errorf("invalid mock call: %s", argStr)
-	} else {
-		expectedCall := allowedCalls[len(calls)]
-		if expectedCall != argStr {
-			err = fmt.Errorf("invalid mock call!\nexpected: %s\nactual:   %s", expectedCall, argStr)
+	if joinedArgs != kubectlWatchEventsCall {
+		// Only allow provided expected mock calls provided with env
+		allowedCallsEnv := os.Getenv("K8SPKGTEST")
+		var allowedCalls []string
+		if allowedCallsEnv != "" {
+			allowedCalls = strings.Split(allowedCallsEnv, "\n")
 		}
-	}
+		calls, e := trackedKubectlCalls(kubectlCallFile)
+		if e != nil {
+			return e
+		}
+		if len(allowedCalls) <= len(calls) {
+			err = fmt.Errorf("invalid mock call: %s", argStr)
+		} else {
+			expectedCall := allowedCalls[len(calls)]
+			if expectedCall != argStr {
+				err = fmt.Errorf("invalid mock call!\nexpected: %s\nactual:   %s", expectedCall, argStr)
+			}
+		}
 
-	// track kubectl call
-	af, e := os.OpenFile(kubectlCallFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if e != nil {
-		return e
+		// track kubectl call
+		af, e := os.OpenFile(kubectlCallFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if e != nil {
+			return e
+		}
+		defer af.Close()
+		fmt.Fprintf(af, "%s\n", argStr)
 	}
-	defer af.Close()
-	fmt.Fprintf(af, "%s\n", argStr)
 
 	if err != nil {
 		return
@@ -69,16 +80,12 @@ metadata:
   labels:
     app.kubernetes.io/part-of: pkg-othernamespace
 `
-	strippedArgs := os.Args[1:]
-	if strippedArgs[0] == "--kubeconfig" {
-		strippedArgs = strippedArgs[2:]
-	}
-	switch strings.Join(strippedArgs, " ") {
+	switch joinedArgs {
 	case kubectlGetCall:
 		err = printFile("../model/test/k8sobjectlist.yaml")
 		err = printFile("../model/test/contained-pod-rs.yaml")
 	case kubectlGetCallNsEmpty:
-		err = printFile("../model/test/k8sobjectlist.yaml")
+		err = printFile("../model/test/status/k8sobjectlist-status.yaml")
 		err = printFile("../model/test/contained-pod-rs.yaml")
 	case kubectlGetCallNsCertManager:
 		err = printFile("../model/test/kustomize/mycert.yaml")
@@ -97,15 +104,47 @@ metadata:
 		err = printFile("../model/test/contained-pod-rs.yaml")
 		fmt.Println(objInOtherNs)
 	case kubectlApplyCallPrune:
-		var f *os.File
-		if f, err = os.OpenFile(os.Getenv("K8SPKGTEST_STDIN"), os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-			defer f.Close()
-			if _, err = io.Copy(f, os.Stdin); err == nil {
-				err = printFile("../model/test/status/k8sobjectlist-status.yaml")
+		b, err := ioutil.ReadAll(os.Stdin)
+		if err == nil {
+			if err = ioutil.WriteFile(os.Getenv("K8SPKGTEST_STDIN"), b, 0644); err == nil {
+				err = printFile("../model/test/k8sobjectlist.yaml")
 			}
 		}
 	case kubectlResTypeCall:
 		fmt.Print(resTypeTable)
+	case kubectlWatchEventsCall:
+		fmt.Println(`{
+			"type": "Warning",
+			"reason": "some reason",
+			"message": "some message",
+			"lastTimestamp": "2019-08-21T00:00:00Z",
+			"involvedObject": {
+				"uid": "b99471c0-96d6-11e9-bafd-0242a54f69f8"
+			}
+		}`)
+		fmt.Println(`{
+			"type": "Warning",
+			"reason": "another reason",
+			"message": "another message",
+			"lastTimestamp": "2019-08-21T00:00:01Z",
+			"involvedObject": {
+				"uid": "another-uid"
+			}
+		}`)
+		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(5*time.Second))
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigs
+			cancel()
+		}()
+		select {
+		case <-ctx.Done():
+			if e := ctx.Err(); e != context.Canceled {
+				err = e
+			}
+		}
 	}
 	return
 }

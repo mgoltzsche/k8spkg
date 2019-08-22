@@ -3,11 +3,11 @@ package k8spkg
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mgoltzsche/k8spkg/pkg/model"
 	"github.com/pkg/errors"
@@ -18,6 +18,7 @@ const (
 	// See https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
 	PKG_NAME_LABEL = "app.kubernetes.io/part-of"
 	PKG_NS_LABEL   = "k8spkg.mgoltzsche.github.com/namespaces"
+	defaultTimeout = time.Duration(2 * time.Minute)
 )
 
 type PackageManager struct {
@@ -176,39 +177,152 @@ func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args 
 	return
 }
 
+func getTimeout(ctx context.Context) string {
+	t, ok := ctx.Deadline()
+	if ok {
+		return t.Sub(time.Now()).String()
+	}
+	return defaultTimeout.String()
+}
+
 func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool) (err error) {
 	logrus.Infof("Applying package %s", pkg.Name)
+	startTime := time.Now()
 	reader := manifestReader(pkg.Objects)
 	pkgLabel := PKG_NAME_LABEL + "=" + pkg.Name
-	args := []string{"apply", "--wait=true", "--timeout=2m", "-f", "-", "--record"}
+
+	args := []string{"apply", "-o", "yaml", "--wait=true", "--timeout=" + getTimeout(ctx), "-f", "-", "--record"}
 	if prune {
 		// TODO: delete objects within other namespaces that belong to the package as well
 		args = append(args, "-l", pkgLabel, "--prune")
 	}
+	pReader, pWriter := io.Pipe()
+	objCh := make(chan []*model.K8sObject)
+	errCh := make(chan error)
+	go func() {
+		obj, e := model.FromReader(pReader)
+		pReader.CloseWithError(e)
+		objCh <- obj
+		errCh <- e
+	}()
 	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 	cmd.Stdin = reader
+	cmd.Stdout = pWriter
 	err = cmd.Run(args...)
-	if e := reader.Close(); e != nil && err == nil {
-		err = e
-	}
-	if err == nil {
-		var obj []*model.K8sObject
-		if obj, err = m.objectState(ctx, pkg.Objects); err == nil {
-			if err = m.awaitRollout(ctx, obj); err == nil {
-				err = m.awaitCondition(ctx, obj)
-			}
+	e1 := reader.Close()
+	e2 := pWriter.Close()
+	obj := <-objCh
+	e3 := <-errCh
+	close(objCh)
+	close(errCh)
+	for _, e := range []error{e3, e1, e2} {
+		if e != nil && err == nil {
+			err = e
+			break
 		}
 	}
+	if err == nil {
+		err = m.awaitChangesApplied(ctx, &K8sPackage{pkg.PackageInfo, obj}, startTime)
+	}
 	return errors.Wrapf(err, "apply package %s", pkg.Name)
+}
+
+func (m *PackageManager) awaitChangesApplied(ctx context.Context, pkg *K8sPackage, startTime time.Time) (err error) {
+	obj := pkg.Objects
+	uidMap := map[string]*model.K8sObject{}
+	allUids := map[string]bool{}
+	for _, o := range obj {
+		uidMap[o.Uid] = o
+	}
+	ns := ""
+	if len(pkg.Namespaces) > 0 {
+		ns = pkg.Namespaces[0]
+	}
+	obj = nil
+	if pkg, err = m.State(ctx, ns, pkg.Name); err != nil {
+		return
+	}
+	for _, o := range pkg.Objects {
+		allUids[o.Uid] = true
+		if uidMap[o.Uid] != nil {
+			obj = append(obj, o)
+		}
+	}
+
+	errCh := make(chan error)
+	go func() {
+		e := m.awaitRollout(ctx, obj)
+		if e == nil {
+			e = m.awaitCondition(ctx, obj)
+		}
+		errCh <- e
+	}()
+
+	ctx, cancel := context.WithCancel(ctx)
+	evtCh, evtErrCh := EventChannel(ctx, m.kubeconfigFile)
+	var evt *Event
+	done := 0
+	for {
+		select {
+		case evt = <-evtCh:
+			if allUids[evt.InvolvedObject.Uid] {
+				logEvent(evt, startTime)
+			}
+		case evtErr := <-evtErrCh:
+			if done == 0 {
+				select {
+				case <-ctx.Done():
+				default:
+					logrus.Warnf("error while streaming events: %s", evtErr)
+				}
+			}
+			done++
+		case err = <-errCh:
+			cancel()
+			done++
+		}
+		if done == 2 {
+			break
+		}
+	}
+	close(evtCh)
+	close(errCh)
+	close(evtErrCh)
+	if err != nil {
+		ctx, _ = context.WithTimeout(context.Background(), defaultTimeout)
+		descr, e := m.describeFailureCause(ctx, obj)
+		if e != nil {
+			descr = "  find error cause: " + e.Error()
+		}
+		if descr != "" {
+			err = errors.Errorf("%s\n\n  STATUS REPORT:\n\n%s", err, descr)
+		}
+	}
+	return
+}
+
+func logEvent(evt *Event, startTime time.Time) {
+	kind := strings.ToLower(evt.InvolvedObject.Kind)
+	name := evt.InvolvedObject.Name
+	duration := time.Duration(time.Time(evt.LastTimestamp).Sub(startTime).Seconds()) * time.Second
+	switch evt.Type {
+	case "Normal":
+		logrus.Infof("%7s %s/%s %s: %s (%dx)", duration, kind, name, evt.Reason, evt.Message, evt.Count)
+	case "Warning":
+		logrus.Warnf("%7s %s/%s %s: %s (%dx)", duration, kind, name, evt.Reason, evt.Message, evt.Count)
+	default:
+		logrus.Errorf("%7s %s %s/%s %s: %s (%dx)", duration, evt.Type, kind, name, evt.Reason, evt.Message, evt.Count)
+	}
 }
 
 func (m *PackageManager) objectState(ctx context.Context, obj []*model.K8sObject) (state []*model.K8sObject, err error) {
 	nsMap, nsOrder := groupByNamespace(obj)
 	for _, ns := range nsOrder {
 		ol := nsMap[ns]
-		args := make([]string, len(ol))
+		args := make([]string, len(ol)+1)
+		args[0] = "--ignore-not-found"
 		for i, o := range ol {
-			args[i] = strings.ToLower(o.Kind) + "/" + o.Name
+			args[i+1] = strings.ToLower(o.Kind) + "/" + o.Name
 		}
 		ol, e := m.kubectlGet(ctx, ns, args)
 		if e == nil {
@@ -231,7 +345,7 @@ func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObjec
 		return o.Kind == "Deployment" || o.Kind == "DaemonSet" || o.Kind == "StatefulSet"
 	})
 	for _, o := range obj {
-		args := []string{"rollout", "status", "-w", "--timeout=2m"}
+		args := []string{"rollout", "status", "-w", "--timeout=" + getTimeout(ctx)}
 		if o.Namespace != "" {
 			args = append(args, "-n", o.Namespace)
 		}
@@ -249,21 +363,66 @@ func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObjec
 	return
 }
 
+func (m *PackageManager) describeFailureCause(ctx context.Context, obj []*model.K8sObject) (msg string, err error) {
+	if obj, err = m.objectState(ctx, obj); err != nil {
+		return
+	}
+	failedObj := []*model.K8sObject{}
+	condMsgs := []string{}
+	for _, o := range obj {
+		var failedConds []string
+		reasonMap := map[string]bool{}
+		reasons := []string{}
+		for _, cond := range o.Conditions {
+			if !cond.Status {
+				failedConds = append(failedConds, cond.Type)
+				failedObj = append(failedObj, o)
+				reason := cond.Reason
+				if reason == "" {
+					reason = "not " + cond.Type
+				}
+				if cond.Message != "" {
+					reasonMap[reason] = false
+					reason += ": " + cond.Message
+				}
+				if !reasonMap[reason] {
+					reasonMap[reason] = true
+					reasons = append(reasons, reason)
+				}
+			}
+		}
+		if len(failedConds) > 0 {
+			uniqReasons := make([]string, 0, len(reasons))
+			for _, reason := range reasons {
+				if reasonMap[reason] {
+					uniqReasons = append(uniqReasons, reason)
+				}
+			}
+			failedCondStr := strings.Join(failedConds, ", ")
+			failureCauses := strings.Join(uniqReasons, "\n  - ")
+			condMsgs = append(condMsgs, fmt.Sprintf("  %s has not met status conditions %s:\n  - %s", o.ID(), failedCondStr, failureCauses))
+		}
+	}
+	sort.Strings(condMsgs)
+	msg = strings.Join(condMsgs, "\n\n")
+	return
+}
+
 func (m *PackageManager) awaitCondition(ctx context.Context, obj []*model.K8sObject) (err error) {
 	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 	ctMap := map[string][]*model.K8sObject{}
-	keys := []string{}
+	types := []string{}
 	for _, o := range obj {
-		for _, ct := range o.ConditionTypes {
-			ol := ctMap[ct]
+		for _, c := range o.Conditions {
+			ol := ctMap[c.Type]
 			if ol == nil {
-				keys = append(keys, ct)
+				types = append(types, c.Type)
 			}
-			ctMap[ct] = append(ol, o)
+			ctMap[c.Type] = append(ol, o)
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
-	for _, ct := range keys {
+	sort.Sort(sort.Reverse(sort.StringSlice(types)))
+	for _, ct := range types {
 		ol := ctMap[ct]
 		logrus.Debugf("Waiting for %d components to become %s...", len(ol), ct)
 		if err = kubectlWait(cmd, ol, "condition="+ct); err != nil {
@@ -292,7 +451,7 @@ func kubectlWaitNames(cmd *kubectlCmd, ns string, names []string, forExpr string
 	if len(names) == 0 {
 		return
 	}
-	args := []string{"wait", "--for", forExpr, "--timeout=2m"}
+	args := []string{"wait", "--for", forExpr, "--timeout=" + getTimeout(cmd.ctx)}
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
@@ -403,7 +562,6 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 			err = errors.Errorf("%d/%d objects could not be deleted: %+v", len(obj)-len(orphanObj), len(obj), names(orphanObj))
 		}
 	}
-
 	return
 }
 
@@ -411,7 +569,7 @@ func (m *PackageManager) deleteObjectNames(ctx context.Context, ns string, names
 	if len(names) == 0 {
 		return
 	}
-	args := []string{"delete", "--wait=true", "--timeout=2m", "--cascade=true", "--ignore-not-found=true"}
+	args := []string{"delete", "--wait=true", "--timeout=" + getTimeout(ctx), "--cascade=true", "--ignore-not-found=true"}
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
@@ -450,33 +608,4 @@ func manifestReader(objects []*model.K8sObject) io.ReadCloser {
 		writer.CloseWithError(model.WriteManifest(objects, writer))
 	}()
 	return reader
-}
-
-type kubectlCmd struct {
-	ctx            context.Context
-	kubeconfigFile string
-	Stdout         io.Writer
-	Stderr         io.Writer
-	Stdin          io.Reader
-}
-
-func newKubectlCmd(ctx context.Context, kubeconfigFile string) *kubectlCmd {
-	return &kubectlCmd{
-		ctx:            ctx,
-		kubeconfigFile: kubeconfigFile,
-		Stdout:         os.Stdout,
-		Stderr:         os.Stderr,
-	}
-}
-
-func (c *kubectlCmd) Run(args ...string) (err error) {
-	if c.kubeconfigFile != "" {
-		args = append([]string{"--kubeconfig", c.kubeconfigFile}, args...)
-	}
-	cmd := exec.CommandContext(c.ctx, "kubectl", args...)
-	cmd.Stdout = c.Stdout
-	cmd.Stderr = c.Stderr
-	cmd.Stdin = c.Stdin
-	logrus.Debugf("Running %+v", cmd.Args)
-	return errors.Wrapf(cmd.Run(), "%+v", cmd.Args)
 }

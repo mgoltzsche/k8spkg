@@ -55,65 +55,56 @@ namespaces                        ns                                          fa
 deployments                       deploy       extensions                     true         Deployment
 customresourcedefinitions         crd,crds     apiextensions.k8s.io           false        CustomResourceDefinition`
 	case "get":
-		out = `
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    app.kubernetes.io/part-of: somepkg
-  name: cert-manager-webhook
-  namespace: cert-manager
-status:
-  conditions:
-  - status: "True"
-    type: Available
----
-apiVersion: certmanager.k8s.io/v1alpha1
-kind: Issuer
-metadata:
-  name: ca-issuer
-  lamespace: cert-manager
-  labels:
-    app.kubernetes.io/part-of: somepkg
-status:
-  conditions:
-  - status: "True"
-    type: Ready`
+		if strippedArgs[1] == "event" {
+			out = `{
+				"type": "Warning",
+				"reason": "some reason",
+				"message": "some message",
+				"involvedObject": {
+					"uid": "b99471c0-96d6-11e9-bafd-0242a54f69f8"
+				}
+			}`
+		} else {
+			var b []byte
+			b, err = ioutil.ReadFile("../model/test/status/k8sobjectlist-status.yaml")
+			out = string(b)
+		}
 	case "apply":
 		var b []byte
 		b, err = ioutil.ReadAll(os.Stdin)
 		if err == nil {
 			stdinLen = len(b)
 		}
+		b, err = ioutil.ReadFile("../model/test/k8sobjectlist.yaml")
+		out = string(b)
 	}
 	fmt.Fprintf(f, "%d %s\n", stdinLen, argStr)
 	fmt.Println(out)
 	return
 }
 
-func assertKubectlCmdsUsed(t *testing.T, args, expectedCmds []string, callMap map[string]string) {
+func assertKubectlVerbsUsed(t *testing.T, args, expectedVerbs []string, callMap map[string]string) {
 	_, actualCalls, err := testRun(t, args)
 	require.NoError(t, err)
 	cmdMap := map[string]bool{}
-	for _, cmd := range expectedCmds {
+	for _, cmd := range expectedVerbs {
 		cmdMap[cmd] = false
 	}
 	actualCmds := []string{}
 	for _, call := range actualCalls {
 		cmdSegs := strings.Split(call, " ")
-		cmd := cmdSegs[1]
-		if cmd == "--kubeconfig" {
-			cmd = cmdSegs[3]
+		verb := cmdSegs[1]
+		if verb == "--kubeconfig" {
+			verb = cmdSegs[3]
 		}
-		used, isExpected := cmdMap[cmd]
-		require.True(t, isExpected, "unexpected kubectl cmd %q used by %+v:\n  %s", cmd, args, call)
-		cmdMap[cmd] = true
+		used, isExpected := cmdMap[verb]
+		require.True(t, isExpected, "unexpected kubectl cmd %q used by %+v:\n  %s", verb, args, call)
+		cmdMap[verb] = true
 		if !used {
-			actualCmds = append(actualCmds, cmd)
+			actualCmds = append(actualCmds, verb)
 		}
 	}
-	require.Equal(t, expectedCmds, actualCmds, "used commands of %+v", args)
+	require.Equal(t, expectedVerbs, actualCmds, "used commands of %+v", args)
 
 	// Check for unused options - different calls that result in same kubectl calls
 	callsStr := strings.Join(actualCalls, "\n")
@@ -155,30 +146,35 @@ func TestManifest(t *testing.T) {
 
 func TestCLI(t *testing.T) {
 	kubectlCallSets := map[string]string{}
-	applyKubectlCmds := []string{"apply", "get", "rollout", "wait"}
+	applyKubectlVerbs := []string{"apply", "api-resources", "get", "rollout", "wait"}
 	for _, c := range []struct {
-		args                []string
-		expectedKubectlCmds []string
+		args                 []string
+		expectedKubectlVerbs []string
 	}{
 		{[]string{"manifest", "somepkg"}, []string{"api-resources", "get"}},
-		{[]string{"manifest", "somepkg", "-n", "myns"}, []string{"api-resources", "get"}},
+		{[]string{"-d", "manifest", "somepkg", "-n", "myns"}, []string{"api-resources", "get"}},
 		{[]string{"manifest", "somepkg", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get"}},
-		{[]string{"apply", "-f", "../model/test"}, applyKubectlCmds},
-		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, applyKubectlCmds},
-		{[]string{"apply", "-f", "../model/test/manifestdir", "-n", "myns", "--name", "renamedpkg"}, applyKubectlCmds},
-		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlCmds},
-		{[]string{"apply", "-k", "../model/test/kustomize"}, applyKubectlCmds},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, applyKubectlCmds},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, applyKubectlCmds},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlCmds},
+		{[]string{"apply", "-f", "../model/test"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../model/test", "--timeout=3s"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../model/test/manifestdir", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../model/test/kustomize"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../model/test/kustomize", "--timeout=3s"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlVerbs},
 		{[]string{"delete", "-f", "../model/test"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-f", "../model/test", "--timeout=3s"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test/manifestdir"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test", "-n", "myns"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-f", "../model/test", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-k", "../model/test/kustomize"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-k", "../model/test/kustomize", "--timeout=3s"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-k", "../model/test/kustomize", "-n", "myns"}, []string{"delete", "wait"}},
 		{[]string{"delete", "-k", "../model/test/kustomize", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
 		{[]string{"delete", "somepkg"}, []string{"api-resources", "get", "delete", "wait"}},
+		{[]string{"delete", "somepkg", "--timeout=3s"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"delete", "somepkg", "-n", "myns"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"delete", "somepkg", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"list"}, []string{"api-resources", "get"}},
@@ -186,7 +182,7 @@ func TestCLI(t *testing.T) {
 		{[]string{"list", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get"}},
 		{[]string{"list", "--all-namespaces"}, []string{"api-resources", "get"}},
 	} {
-		assertKubectlCmdsUsed(t, c.args, c.expectedKubectlCmds, kubectlCallSets)
+		assertKubectlVerbsUsed(t, c.args, c.expectedKubectlVerbs, kubectlCallSets)
 	}
 }
 

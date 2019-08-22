@@ -16,14 +16,15 @@ var (
 	testNamespace               = "myns"
 	kubectlGetCallPrfx          = "get -o yaml "
 	kubectlGetCall              = kubectlGetCallPrfx + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -n " + testNamespace
-	kubectlGetCallNsCertManager = "get -o yaml " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n cert-manager"
-	kubectlGetCallNsMynamespace = "get -o yaml " + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n mynamespace"
-	kubectlGetCallNsEmpty       = "get -o yaml " + resTypesStr + " -l app.kubernetes.io/part-of=somepkg"
+	kubectlGetCallNsCertManager = kubectlGetCallPrfx + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n cert-manager"
+	kubectlGetCallNsMynamespace = kubectlGetCallPrfx + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n mynamespace"
+	kubectlGetCallNsEmpty       = kubectlGetCallPrfx + resTypesStr + " -l app.kubernetes.io/part-of=somepkg"
 
-	kubectlApplyCall           = "apply --wait=true --timeout=2m -f - --record"
+	kubectlApplyCall           = "apply -o yaml --wait=true --timeout=2m0s -f - --record"
 	kubectlApplyCallPrune      = kubectlApplyCall + " -l app.kubernetes.io/part-of=somepkg --prune"
 	kubectlApplyCallKubeconfig = "--kubeconfig kubeconfig.yaml " + kubectlApplyCallPrune
 	kubectlGetObjStatusCall    = kubectlGetCallPrfx + "customresourcedefinition/certificates.certmanager.k8s.io apiservice/myapiservice"
+	kubectlWatchEventsCall     = "get event --watch -o json --all-namespaces --sort-by=.metadata.lastTimestamp"
 )
 
 func TestPackageManagerApply(t *testing.T) {
@@ -37,18 +38,22 @@ func TestPackageManagerApply(t *testing.T) {
 	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
 		expectedCalls := []string{
 			kubectlApplyCallPrune,
-			kubectlGetObjStatusCall,
-			kubectlGetCallPrfx + "deployment/somedeployment deployment/mydeployment -n mynamespace",
-			kubectlGetCallPrfx + "certificate/onemorecert deployment/cert-manager-webhook -n cert-manager",
-			"rollout status -w --timeout=2m -n mynamespace deployment/somedeployment",
-			"rollout status -w --timeout=2m -n mynamespace deployment/mydeployment",
-			"rollout status -w --timeout=2m -n cert-manager deployment/cert-manager-webhook",
-			"wait --for condition=ready --timeout=2m -n cert-manager certificate/onemorecert",
-			"wait --for condition=namesaccepted --timeout=2m customresourcedefinition/certificates.certmanager.k8s.io",
-			"wait --for condition=established --timeout=2m customresourcedefinition/certificates.certmanager.k8s.io",
-			"wait --for condition=available --timeout=2m -n mynamespace deployment/somedeployment deployment/mydeployment",
-			"wait --for condition=available --timeout=2m apiservice/myapiservice",
-			"wait --for condition=available --timeout=2m -n cert-manager deployment/cert-manager-webhook",
+			kubectlResTypeCall,
+			kubectlGetCallNsEmpty,
+			kubectlGetCallNsCertManager,
+			//kubectlGetCallNsMynamespace, (unnecessary since detected as default namespace)
+			//kubectlGetObjStatusCall,
+			//kubectlGetCallPrfx + "deployment/somedeployment deployment/mydeployment -n mynamespace",
+			//kubectlGetCallPrfx + "certificate/onemorecert deployment/cert-manager-webhook -n cert-manager",
+			"rollout status -w --timeout=2m0s -n mynamespace deployment/somedeployment",
+			"rollout status -w --timeout=2m0s -n mynamespace deployment/mydeployment",
+			"rollout status -w --timeout=2m0s -n cert-manager deployment/cert-manager-webhook",
+			"wait --for condition=ready --timeout=2m0s -n cert-manager certificate/onemorecert",
+			"wait --for condition=namesaccepted --timeout=2m0s customresourcedefinition/certificates.certmanager.k8s.io",
+			"wait --for condition=established --timeout=2m0s customresourcedefinition/certificates.certmanager.k8s.io",
+			"wait --for condition=available --timeout=2m0s -n mynamespace deployment/somedeployment deployment/mydeployment",
+			"wait --for condition=available --timeout=2m0s apiservice/myapiservice",
+			"wait --for condition=available --timeout=2m0s -n cert-manager deployment/cert-manager-webhook",
 		}
 		if kubecfgFile != "" {
 			for i, call := range expectedCalls {
@@ -135,16 +140,16 @@ func TestPackageManagerDelete(t *testing.T) {
 			kubectlGetCall,
 			kubectlGetCallNsCertManager,
 			kubectlGetCallNsMynamespace,
-			"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n cert-manager certificate/onemorecert certificate/mycert",
-			"wait --for delete --timeout=2m -n cert-manager certificate/onemorecert certificate/mycert",
-			"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n mynamespace deployment/somedeployment deployment/mydeployment",
-			"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true -n cert-manager deployment/cert-manager-webhook",
-			"wait --for delete --timeout=2m -n mynamespace deployment/somedeployment deployment/mydeployment",
-			"wait --for delete --timeout=2m -n cert-manager deployment/cert-manager-webhook replicaset/cert-manager-webhook-7444b58c45 pod/cert-manager-webhook-7444b58c45-9cfgh",
-			"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true apiservice/myapiservice",
-			"wait --for delete --timeout=2m apiservice/myapiservice",
-			"delete --wait=true --timeout=2m --cascade=true --ignore-not-found=true customresourcedefinition/certificates.certmanager.k8s.io",
-			"wait --for delete --timeout=2m customresourcedefinition/certificates.certmanager.k8s.io",
+			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true -n cert-manager certificate/onemorecert certificate/mycert",
+			"wait --for delete --timeout=2m0s -n cert-manager certificate/onemorecert certificate/mycert",
+			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true -n mynamespace deployment/somedeployment deployment/mydeployment",
+			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true -n cert-manager deployment/cert-manager-webhook",
+			"wait --for delete --timeout=2m0s -n mynamespace deployment/somedeployment deployment/mydeployment",
+			"wait --for delete --timeout=2m0s -n cert-manager deployment/cert-manager-webhook replicaset/cert-manager-webhook-7444b58c45 pod/cert-manager-webhook-7444b58c45-9cfgh",
+			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true apiservice/myapiservice",
+			"wait --for delete --timeout=2m0s apiservice/myapiservice",
+			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true customresourcedefinition/certificates.certmanager.k8s.io",
+			"wait --for delete --timeout=2m0s customresourcedefinition/certificates.certmanager.k8s.io",
 		}
 		kubecfgOpt := ""
 		if kubecfgFile != "" {
@@ -177,7 +182,7 @@ func TestPackageManagerDelete(t *testing.T) {
 			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "kubectl error during deletion should still attempt to delete other resources")
 		})
 		// kubectl error while awaiting deletion should be resolved by attempting to lookup objects
-		expectedCalls = append(expectedCalls, kubecfgOpt+"get -o yaml customresourcedefinition/certificates.certmanager.k8s.io")
+		expectedCalls = append(expectedCalls, kubecfgOpt+"get -o yaml --ignore-not-found customresourcedefinition/certificates.certmanager.k8s.io")
 		assertKubectlCalls(t, expectedCalls, len(expectedCalls)-2, func(_ string) {
 			testee := NewPackageManager(kubecfgFile)
 			require.NoError(t, testee.Delete(context.Background(), "myns", "somepkg"), "kubectl error while awaiting deletion should be resolved by attempting to lookup objects")

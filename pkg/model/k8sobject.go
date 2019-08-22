@@ -21,31 +21,46 @@ func WriteManifest(obj []*K8sObject, writer io.Writer) (err error) {
 type rawK8sObject map[string]interface{}
 
 type K8sObject struct {
-	raw            rawK8sObject
-	APIVersion     string
-	Kind           string
-	Namespace      string
-	Name           string
-	ConditionTypes []string
+	raw        rawK8sObject
+	APIVersion string
+	Kind       string
+	Namespace  string
+	Name       string
+	Uid        string
+	Conditions []*K8sObjectCondition
+}
+
+type K8sObjectCondition struct {
+	Type    string
+	Status  bool
+	Reason  string
+	Message string
 }
 
 func FromMap(o map[string]interface{}) *K8sObject {
 	meta := asMap(o["metadata"])
-	conditions := asList(lookup(o, "status.conditions"))
-	conditionTypes := make([]string, 0, len(conditions))
-	for _, condition := range conditions {
-		ct := asString(asMap(condition)["type"])
+	rawConditions := asList(lookup(o, "status.conditions"))
+	conditions := make([]*K8sObjectCondition, 0, len(rawConditions))
+	for _, entry := range rawConditions {
+		rawCondition := asMap(entry)
+		ct := asString(rawCondition["type"])
 		if ct != "" {
-			conditionTypes = append(conditionTypes, strings.ToLower(ct))
+			conditions = append(conditions, &K8sObjectCondition{
+				strings.ToLower(ct),
+				strings.ToLower(asString(rawCondition["status"])) == "true",
+				asString(rawCondition["reason"]),
+				asString(rawCondition["message"]),
+			})
 		}
 	}
 	return &K8sObject{
-		raw:            o,
-		APIVersion:     asString(o["apiVersion"]),
-		Kind:           asString(o["kind"]),
-		Namespace:      asString(meta["namespace"]),
-		Name:           asString(meta["name"]),
-		ConditionTypes: conditionTypes,
+		raw:        o,
+		APIVersion: asString(o["apiVersion"]),
+		Kind:       asString(o["kind"]),
+		Namespace:  asString(meta["namespace"]),
+		Name:       asString(meta["name"]),
+		Uid:        asString(meta["uid"]),
+		Conditions: conditions,
 	}
 }
 
