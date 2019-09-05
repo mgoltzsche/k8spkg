@@ -304,14 +304,15 @@ func (m *PackageManager) awaitChangesApplied(ctx context.Context, pkg *K8sPackag
 func logEvent(evt *Event, startTime time.Time) {
 	kind := strings.ToLower(evt.InvolvedObject.Kind)
 	name := evt.InvolvedObject.Name
-	duration := time.Duration(time.Time(evt.LastTimestamp).Sub(startTime).Seconds()) * time.Second
+	ns := evt.InvolvedObject.Namespace
+	log := logrus.WithField("id", kind+"/"+name).WithField("ns", ns)
 	switch evt.Type {
 	case "Normal":
-		logrus.Infof("%7s %s/%s %s: %s (%dx)", duration, kind, name, evt.Reason, evt.Message, evt.Count)
+		log.Infof("%s: %s (%dx)", evt.Reason, evt.Message, evt.Count)
 	case "Warning":
-		logrus.Warnf("%7s %s/%s %s: %s (%dx)", duration, kind, name, evt.Reason, evt.Message, evt.Count)
+		log.Warnf("%s: %s (%dx)", evt.Reason, evt.Message, evt.Count)
 	default:
-		logrus.Errorf("%7s %s %s/%s %s: %s (%dx)", duration, evt.Type, kind, name, evt.Reason, evt.Message, evt.Count)
+		log.Errorf("%s %s: %s (%dx)", evt.Type, evt.Reason, evt.Message, evt.Count)
 	}
 }
 
