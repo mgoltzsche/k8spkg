@@ -305,14 +305,15 @@ func logEvent(evt *Event, startTime time.Time) {
 	kind := strings.ToLower(evt.InvolvedObject.Kind)
 	name := evt.InvolvedObject.Name
 	ns := evt.InvolvedObject.Namespace
+	msg := strings.TrimSpace(evt.Message)
 	log := logrus.WithField("id", kind+"/"+name).WithField("ns", ns)
 	switch evt.Type {
 	case "Normal":
-		log.Infof("%s: %s (%dx)", evt.Reason, evt.Message, evt.Count)
+		log.Infof("%s: %s (%dx)", evt.Reason, msg, evt.Count)
 	case "Warning":
-		log.Warnf("%s: %s (%dx)", evt.Reason, evt.Message, evt.Count)
+		log.Warnf("%s: %s (%dx)", evt.Reason, msg, evt.Count)
 	default:
-		log.Errorf("%s %s: %s (%dx)", evt.Type, evt.Reason, evt.Message, evt.Count)
+		log.Errorf("%s %s: %s (%dx)", evt.Type, evt.Reason, msg, evt.Count)
 	}
 }
 
