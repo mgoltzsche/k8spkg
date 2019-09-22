@@ -52,10 +52,15 @@ func LoadAPIResourceTypes(ctx context.Context, kubeconfigFile string) (types []*
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 	logrus.Debugf("Running %+v", c.Args)
-	if err = c.Run(); err != nil {
-		err = errors.Errorf("%+v: %s. %s", c.Args, err, strings.TrimSuffix(stderr.String(), "\n"))
-	} else {
-		types, err = parseApiResourceTable(bytes.NewReader(stdout.Bytes()))
+	e := c.Run()
+	types, err = parseApiResourceTable(bytes.NewReader(stdout.Bytes()))
+	if e != nil {
+		e = errors.Errorf("%+v: %s. %s", c.Args, e, strings.TrimSuffix(stderr.String(), "\n"))
+		if len(types) > 0 {
+			logrus.Warn(e.Error())
+		} else {
+			err = e
+		}
 	}
 	return
 }
