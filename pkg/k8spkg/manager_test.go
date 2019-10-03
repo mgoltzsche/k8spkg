@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,9 +28,9 @@ var (
 )
 
 func TestPackageManagerApply(t *testing.T) {
-	b, err := ioutil.ReadFile("../model/test/k8sobjectlist.yaml")
+	b, err := ioutil.ReadFile("../resource/test/k8sobjectlist.yaml")
 	require.NoError(t, err)
-	obj, err := model.FromReader(bytes.NewReader(b))
+	obj, err := resource.FromReader(bytes.NewReader(b))
 	require.NoError(t, err)
 	pkg := &K8sPackage{&PackageInfo{Name: "somepkg"}, obj}
 
@@ -66,7 +66,7 @@ func TestPackageManagerApply(t *testing.T) {
 			assert.NoError(t, err, "Apply()")
 
 			// Assert applied content is complete
-			expected, err := model.FromReader(bytes.NewReader(b))
+			expected, err := resource.FromReader(bytes.NewReader(b))
 			require.NoError(t, err)
 			var expectedYaml bytes.Buffer
 			for _, o := range expected {
@@ -110,10 +110,10 @@ func TestPackageManagerState(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "somepkg", pkg.Name, "pkg name")
 				s := ""
-				for _, o := range pkg.Objects {
+				for _, o := range pkg.Resources {
 					s += "\n  " + o.ID()
 				}
-				require.Equal(t, 9, len(pkg.Objects), "amount of loaded objects\nobjects: %s", s)
+				require.Equal(t, 9, len(pkg.Resources), "amount of loaded objects\nobjects: %s", s)
 			}
 		}
 		assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(testNamespace))

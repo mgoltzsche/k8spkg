@@ -12,11 +12,11 @@ like kubectl.
 
 ## Features
 
-- Maintain a group of Kubernetes API objects generically as "package" using [labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/) (`app.kubernetes.io/part-of`, `k8spkg.mgoltzsche.github.com/namespaces`).
-- Add common labels to a manifest's API objects (using [kustomize](https://github.com/kubernetes-sigs/kustomize)).
-- Wait for API object's conditions (ready, available, ...) of a manifest.
-- List installed packages: Packages are visible within their API objects' namespace(s) only as long as they don't have global API objects as well.
-- Delete API objects by package name or source and wait until they are deleted.
+- Maintain a group of Kubernetes resources as package using [labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/) (`app.kubernetes.io/part-of`, `k8spkg.mgoltzsche.github.com/namespaces`).
+- Add common labels to a manifest's resources (using [kustomize](https://github.com/kubernetes-sigs/kustomize)).
+- Wait for conditions (ready, available, ...) of a manifest's resources.
+- List installed packages: Packages are visible within their resources' namespace(s) only as long as they don't have cluster-scoped resources as well.
+- Delete resources by package name or manifest and wait until they are deleted.
 - [kustomization](https://github.com/kubernetes-sigs/kustomize) source support.
 
 ## Requirements
@@ -29,9 +29,9 @@ like kubectl.
 | Command | Description |
 |-------|-------------|
 | `manifest {-f SRC\|-k SRC} [--name <PKG>] [--namespace <NS>] [--timeout <DURATION>]` | Prints a merged and labeled manifest |
-| `apply {-f SRC\|-k SRC} [--name <PKG>] [--namespace <NS>] [--timeout <DURATION>] [--prune]` | Installs or updates the provided source as package and waits for the rollout to succeed. `--prune` deletes all API objects labeled with the package name that do not appear within the source from the cluster - should be used carefully. |
-| `delete {-f SRC\|-k SRC\|PKG} [--namespace <NS>] [--timeout <DURATION>]` | Deletes the identified objects from the cluster and awaits their deletion. A package's API objects in other namespaces that are referred to (label) within global API objects are deleted as well. |
-| `list [--all-namespaces\|--namespace <NS>] [--timeout <DURATION>]` | Lists the installed packages that are visible within the namespace. Other namespaces are not queried as long as `--all-namespaces` is not enabled. However packages of global API objects and their referenced (label) namespaces are listed as well. |
+| `apply {-f SRC\|-k SRC} [--name <PKG>] [--namespace <NS>] [--timeout <DURATION>] [--prune]` | Installs or updates the provided source as package and waits for the rollout to succeed. `--prune` deletes all resources labeled with the package name that do not appear within the source from the cluster - should be used carefully. |
+| `delete {-f SRC\|-k SRC\|PKG} [--namespace <NS>] [--timeout <DURATION>]` | Deletes the identified resources from the cluster and awaits their deletion. A package's resources in other namespaces that are referred to (label) within cluster-scoped resources are deleted as well. |
+| `list [--all-namespaces\|--namespace <NS>] [--timeout <DURATION>]` | Lists the installed packages that are visible within the namespace. Other namespaces are not queried as long as `--all-namespaces` is not enabled. However packages of cluster-scoped resources and their referenced (label) namespaces are listed as well. |
 
 ### Examples
 
@@ -46,7 +46,7 @@ Label and deploy `cert-manager` and a namespaced issuer afterwards:
 k8spkg apply --name cert-manager -f https://raw.githubusercontent.com/jetstack/cert-manager/release-0.7/deploy/manifests/cert-manager.yaml &&
 k8spkg apply --name cert-manager-ca-issuer -f ca-issuer.yaml
 ```
-_Please note that this does not (yet?!) work with `kubectl apply` since it does not wait for API objects to be ready (cert-manager's APIService must accept the Issuer) and there is no option or other generic `kubectl` command to wait for such a state based on a given manifest. Fortunately `kubectl rollout` and `kubectl wait` serve this purpose but require object names and type-dependent options which k8spkg provides._  
+_Please note that this does not (yet?!) work with `kubectl apply` since it does not wait for resources to be ready (cert-manager's APIService must accept the Issuer) and there is no option or other generic `kubectl` command to wait for such a state based on a given manifest. Fortunately `kubectl rollout` and `kubectl wait` serve this purpose but require resource names and type-dependent options which k8spkg provides._  
 
 List the installed packages from within the `default` namespace:
 ```

@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
-	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,7 +66,7 @@ customresourcedefinitions         crd,crds     apiextensions.k8s.io           fa
 			}`
 		} else {
 			var b []byte
-			b, err = ioutil.ReadFile("../model/test/status/k8sobjectlist-status.yaml")
+			b, err = ioutil.ReadFile("../resource/test/status/k8sobjectlist-status.yaml")
 			out = string(b)
 		}
 	case "apply":
@@ -75,7 +75,7 @@ customresourcedefinitions         crd,crds     apiextensions.k8s.io           fa
 		if err == nil {
 			stdinLen = len(b)
 		}
-		b, err = ioutil.ReadFile("../model/test/k8sobjectlist.yaml")
+		b, err = ioutil.ReadFile("../resource/test/k8sobjectlist.yaml")
 		out = string(b)
 	}
 	fmt.Fprintf(f, "%d %s\n", stdinLen, argStr)
@@ -124,14 +124,14 @@ func TestManifest(t *testing.T) {
 		expectedCount   int
 		args            []string
 	}{
-		{"somepkg", 8, []string{"manifest", "-f", "../model/test"}},
-		{"withname", 8, []string{"manifest", "-f", "../model/test", "--name", "withname"}},
-		{"kustomizedpkg", 2, []string{"manifest", "-k", "../model/test/kustomize"}},
-		{"remoteFile", 2, []string{"manifest", "-f", "http://" + addr + "/model/test/manifestdir/some-cert.yaml", "--name", "remoteFile"}},
+		{"somepkg", 8, []string{"manifest", "-f", "../resource/test"}},
+		{"withname", 8, []string{"manifest", "-f", "../resource/test", "--name", "withname"}},
+		{"kustomizedpkg", 2, []string{"manifest", "-k", "../resource/test/kustomize"}},
+		{"remoteFile", 2, []string{"manifest", "-f", "http://" + addr + "/resource/test/manifestdir/some-cert.yaml", "--name", "remoteFile"}},
 	} {
 		out, _, err := testRun(t, c.args)
 		require.NoError(t, err)
-		obj, err := model.FromReader(bytes.NewReader(out))
+		obj, err := resource.FromReader(bytes.NewReader(out))
 		require.NoError(t, err, "FromReader(%s)", c.expectedPkgName)
 		require.Equal(t, c.expectedCount, len(obj), "%s object count", c.expectedPkgName)
 		pkgName := ""
@@ -154,25 +154,25 @@ func TestCLI(t *testing.T) {
 		{[]string{"manifest", "somepkg"}, []string{"api-resources", "get"}},
 		{[]string{"-d", "manifest", "somepkg", "-n", "myns"}, []string{"api-resources", "get"}},
 		{[]string{"manifest", "somepkg", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"api-resources", "get"}},
-		{[]string{"apply", "-f", "../model/test"}, applyKubectlVerbs},
-		{[]string{"apply", "-f", "../model/test", "--timeout=3s"}, applyKubectlVerbs},
-		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
-		{[]string{"apply", "-f", "../model/test/manifestdir", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
-		{[]string{"apply", "-f", "../model/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlVerbs},
-		{[]string{"apply", "-k", "../model/test/kustomize"}, applyKubectlVerbs},
-		{[]string{"apply", "-k", "../model/test/kustomize", "--timeout=3s"}, applyKubectlVerbs},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--prune"}, applyKubectlVerbs},
-		{[]string{"apply", "-k", "../model/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlVerbs},
-		{[]string{"delete", "-f", "../model/test"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-f", "../model/test", "--timeout=3s"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-f", "../model/test/manifestdir"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-f", "../model/test", "-n", "myns"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-f", "../model/test", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-k", "../model/test/kustomize"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-k", "../model/test/kustomize", "--timeout=3s"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-k", "../model/test/kustomize", "-n", "myns"}, []string{"delete", "wait"}},
-		{[]string{"delete", "-k", "../model/test/kustomize", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
+		{[]string{"apply", "-f", "../resource/test"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../resource/test", "--timeout=3s"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../resource/test", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../resource/test/manifestdir", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
+		{[]string{"apply", "-f", "../resource/test", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../resource/test/kustomize"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../resource/test/kustomize", "--timeout=3s"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../resource/test/kustomize", "-n", "myns", "--name", "renamedpkg"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../resource/test/kustomize", "-n", "myns", "--prune"}, applyKubectlVerbs},
+		{[]string{"apply", "-k", "../resource/test/kustomize", "-n", "myns", "--name", "renamedpkg", "--kubeconfig", "kubeconfig.yaml"}, applyKubectlVerbs},
+		{[]string{"delete", "-f", "../resource/test"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-f", "../resource/test", "--timeout=3s"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-f", "../resource/test/manifestdir"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-f", "../resource/test", "-n", "myns"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-f", "../resource/test", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-k", "../resource/test/kustomize"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-k", "../resource/test/kustomize", "--timeout=3s"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-k", "../resource/test/kustomize", "-n", "myns"}, []string{"delete", "wait"}},
+		{[]string{"delete", "-k", "../resource/test/kustomize", "-n", "myns", "--kubeconfig", "kubeconfig.yaml"}, []string{"delete", "wait"}},
 		{[]string{"delete", "somepkg"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"delete", "somepkg", "--timeout=3s"}, []string{"api-resources", "get", "delete", "wait"}},
 		{[]string{"delete", "somepkg", "-n", "myns"}, []string{"api-resources", "get", "delete", "wait"}},
@@ -191,10 +191,10 @@ func TestCLIErrorHandling(t *testing.T) {
 		{"manifest"},
 		{"manifest", "-n", "myns"},
 		{"apply"},
-		{"apply", "../model/test"},
-		{"apply", "../model/test", "-n", "myns"},
-		{"apply", "../model/test", "--name", "renamedpkg"},
-		{"apply", "../model/test", "-n", "myns", "--name", "renamedpkg"},
+		{"apply", "../resource/test"},
+		{"apply", "../resource/test", "-n", "myns"},
+		{"apply", "../resource/test", "--name", "renamedpkg"},
+		{"apply", "../resource/test", "-n", "myns", "--name", "renamedpkg"},
 		{"delete"},
 		{"list", "--all-namespaces", "-n", "myns"},
 	} {

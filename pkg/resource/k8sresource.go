@@ -1,4 +1,4 @@
-package model
+package resource
 
 import (
 	"fmt"
@@ -9,43 +9,34 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func WriteManifest(obj []*K8sObject, writer io.Writer) (err error) {
-	for _, o := range obj {
-		if err = o.WriteYaml(writer); err != nil {
-			return
-		}
-	}
-	return
-}
+type rawK8sResource map[string]interface{}
 
-type rawK8sObject map[string]interface{}
-
-type K8sObject struct {
-	raw        rawK8sObject
+type K8sResource struct {
+	raw        rawK8sResource
 	APIVersion string
 	Kind       string
 	Namespace  string
 	Name       string
 	Uid        string
-	Conditions []*K8sObjectCondition
+	Conditions []*K8sResourceCondition
 }
 
-type K8sObjectCondition struct {
+type K8sResourceCondition struct {
 	Type    string
 	Status  bool
 	Reason  string
 	Message string
 }
 
-func FromMap(o map[string]interface{}) *K8sObject {
+func FromMap(o map[string]interface{}) *K8sResource {
 	meta := asMap(o["metadata"])
 	rawConditions := asList(lookup(o, "status.conditions"))
-	conditions := make([]*K8sObjectCondition, 0, len(rawConditions))
+	conditions := make([]*K8sResourceCondition, 0, len(rawConditions))
 	for _, entry := range rawConditions {
 		rawCondition := asMap(entry)
 		ct := asString(rawCondition["type"])
 		if ct != "" {
-			conditions = append(conditions, &K8sObjectCondition{
+			conditions = append(conditions, &K8sResourceCondition{
 				strings.ToLower(ct),
 				strings.ToLower(asString(rawCondition["status"])) == "true",
 				asString(rawCondition["reason"]),
@@ -53,7 +44,7 @@ func FromMap(o map[string]interface{}) *K8sObject {
 			})
 		}
 	}
-	return &K8sObject{
+	return &K8sResource{
 		raw:        o,
 		APIVersion: asString(o["apiVersion"]),
 		Kind:       asString(o["kind"]),
@@ -64,31 +55,14 @@ func FromMap(o map[string]interface{}) *K8sObject {
 	}
 }
 
-func FromReader(f io.Reader) (obj []*K8sObject, err error) {
-	dec := yaml.NewDecoder(f)
-	o := map[string]interface{}{}
-	for ; err == nil; err = dec.Decode(o) {
-		if len(o) > 0 {
-			if err = appendFlattened(o, &obj); err != nil {
-				return
-			}
-			o = map[string]interface{}{}
-		}
-	}
-	if err == io.EOF {
-		err = nil
-	}
-	return
-}
-
-func (o *K8sObject) Validate() (err error) {
+func (o *K8sResource) Validate() (err error) {
 	if o.APIVersion == "" || o.Kind == "" || o.Name == "" {
 		err = errors.Errorf("invalid API object: apiVersion, kind or name are not set: %+v", o.raw)
 	}
 	return
 }
 
-func appendFlattened(o rawK8sObject, flattened *[]*K8sObject) (err error) {
+func appendFlattened(o rawK8sResource, flattened *[]*K8sResource) (err error) {
 	if o["kind"] != "List" {
 		entry := FromMap(o)
 		err = entry.Validate()
@@ -107,27 +81,27 @@ func appendFlattened(o rawK8sObject, flattened *[]*K8sObject) (err error) {
 }
 
 // Returns 'items' slice
-func items(o rawK8sObject) (items []rawK8sObject, err error) {
+func items(o rawK8sResource) (items []rawK8sResource, err error) {
 	rawItems := asList(o["items"])
 	if rawItems == nil {
 		return nil, errors.New("object of kind List does not declare items")
 	}
-	items = make([]rawK8sObject, len(rawItems))
+	items = make([]rawK8sResource, len(rawItems))
 	for i, item := range rawItems {
-		items[i] = rawK8sObject(asMap(item))
+		items[i] = rawK8sResource(asMap(item))
 	}
 	return
 }
 
-func (o *K8sObject) ID() string {
+func (o *K8sResource) ID() string {
 	return o.Namespace + "/" + o.Gvk() + "/" + o.Name
 }
 
-func (o *K8sObject) Gvk() string {
+func (o *K8sResource) Gvk() string {
 	return o.APIVersion + "/" + o.Kind
 }
 
-func (o *K8sObject) Labels() (l map[string]string) {
+func (o *K8sResource) Labels() (l map[string]string) {
 	l = map[string]string{}
 	for k, v := range asMap(asMap(o.raw["metadata"])["labels"]) {
 		l[k] = asString(v)
@@ -135,7 +109,7 @@ func (o *K8sObject) Labels() (l map[string]string) {
 	return
 }
 
-func (o *K8sObject) CrdGvk() string {
+func (o *K8sResource) CrdGvk() string {
 	group := o.getString("spec.group")
 	version := o.getString("spec.version")
 	kind := o.getString("spec.names.kind")
@@ -149,7 +123,7 @@ type OwnerReference struct {
 	UID        string
 }
 
-func (o *K8sObject) OwnerReferences() (r []*OwnerReference) {
+func (o *K8sResource) OwnerReferences() (r []*OwnerReference) {
 	for _, ref := range asList(lookup(o.raw, "metadata.ownerReferences")) {
 		r = append(r, &OwnerReference{
 			APIVersion: asString(asMap(ref)["apiVersion"]),
@@ -161,7 +135,7 @@ func (o *K8sObject) OwnerReferences() (r []*OwnerReference) {
 	return
 }
 
-func (o *K8sObject) WriteYaml(writer io.Writer) (err error) {
+func (o *K8sResource) WriteYaml(writer io.Writer) (err error) {
 	if _, err = writer.Write([]byte("---\n")); err == nil {
 		err = yaml.NewEncoder(writer).Encode(o.raw)
 	}
@@ -181,7 +155,7 @@ func lookup(o map[string]interface{}, path string) (r interface{}) {
 	return
 }
 
-func (o *K8sObject) getString(path string) string {
+func (o *K8sResource) getString(path string) string {
 	return asString(lookup(o.raw, path))
 }
 

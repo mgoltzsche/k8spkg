@@ -25,7 +25,7 @@ import (
 
 	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/mgoltzsche/k8spkg/pkg/kustomize"
-	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -136,7 +136,7 @@ func fileReader(ctx context.Context, source string) (reader io.ReadCloser, err e
 		if baseDir, err = os.Getwd(); err != nil {
 			return
 		}
-		reader = model.ManifestReader(ctx, source, baseDir)
+		reader = resource.ManifestReader(ctx, source, baseDir)
 	}
 	return
 }

@@ -19,7 +19,6 @@ import (
 	"os"
 
 	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
-	"github.com/mgoltzsche/k8spkg/pkg/model"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +34,7 @@ var (
 			if err != nil {
 				return
 			}
-			return model.WriteManifest(pkg.Objects, os.Stdout)
+			return pkg.Resources.WriteYaml(os.Stdout)
 		},
 	}
 )

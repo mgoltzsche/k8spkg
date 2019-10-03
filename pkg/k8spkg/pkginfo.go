@@ -4,11 +4,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
+// PackageInfo specifies the package name and namespaces containing its resources.
 type PackageInfo struct {
 	Name       string
 	Namespaces []string
@@ -20,10 +21,10 @@ type pkgInfo struct {
 	namespaceLabelNotSet bool
 }
 
-// Returns a list of the packages declared within the provided objects.
-// An error is only returned if an object has no k8spkg label while all
+// PackageInfosFromResources returns a list of the packages declared within the provided resources.
+// An error is only returned if a resource has no k8spkg label while all
 // declared packages are still returned.
-func PackageInfosFromObjects(obj []*model.K8sObject) (pkgs []*PackageInfo, err error) {
+func PackageInfosFromResources(obj resource.K8sResourceList) (pkgs []*PackageInfo, err error) {
 	pkgMap := map[string]*pkgInfo{}
 	var pkg *pkgInfo
 	for _, o := range obj {

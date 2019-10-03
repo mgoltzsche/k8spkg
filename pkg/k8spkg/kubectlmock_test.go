@@ -82,32 +82,32 @@ metadata:
 `
 	switch joinedArgs {
 	case kubectlGetCall:
-		err = printFile("../model/test/k8sobjectlist.yaml")
-		err = printFile("../model/test/contained-pod-rs.yaml")
+		err = printFile("../resource/test/k8sobjectlist.yaml")
+		err = printFile("../resource/test/contained-pod-rs.yaml")
 	case kubectlGetCallNsEmpty:
-		err = printFile("../model/test/status/k8sobjectlist-status.yaml")
-		err = printFile("../model/test/contained-pod-rs.yaml")
+		err = printFile("../resource/test/status/k8sobjectlist-status.yaml")
+		err = printFile("../resource/test/contained-pod-rs.yaml")
 	case kubectlGetCallNsCertManager:
-		err = printFile("../model/test/kustomize/mycert.yaml")
+		err = printFile("../resource/test/kustomize/mycert.yaml")
 	case kubectlGetObjStatusCall:
-		err = printFile("../model/test/status/k8sobjectlist-status.yaml")
+		err = printFile("../resource/test/status/k8sobjectlist-status.yaml")
 	case kubectlListCall:
-		err = printFile("../model/test/k8sobjectlist.yaml")
-		err = printFile("../model/test/contained-pod-rs.yaml")
+		err = printFile("../resource/test/k8sobjectlist.yaml")
+		err = printFile("../resource/test/contained-pod-rs.yaml")
 		fmt.Println(objInOtherNs)
 	case kubectlListCallNsEmpty:
-		err = printFile("../model/test/k8sobjectlist.yaml")
-		err = printFile("../model/test/contained-pod-rs.yaml")
+		err = printFile("../resource/test/k8sobjectlist.yaml")
+		err = printFile("../resource/test/contained-pod-rs.yaml")
 		fmt.Println(objInOtherNs)
 	case kubectlListCallAllNamespaces:
-		err = printFile("../model/test/k8sobjectlist.yaml")
-		err = printFile("../model/test/contained-pod-rs.yaml")
+		err = printFile("../resource/test/k8sobjectlist.yaml")
+		err = printFile("../resource/test/contained-pod-rs.yaml")
 		fmt.Println(objInOtherNs)
 	case kubectlApplyCallPrune:
 		b, err := ioutil.ReadAll(os.Stdin)
 		if err == nil {
 			if err = ioutil.WriteFile(os.Getenv("K8SPKGTEST_STDIN"), b, 0644); err == nil {
-				err = printFile("../model/test/k8sobjectlist.yaml")
+				err = printFile("../resource/test/k8sobjectlist.yaml")
 			}
 		}
 	case kubectlResTypeCall:

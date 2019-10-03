@@ -50,7 +50,7 @@ var (
 				return
 			}
 			// TODO: recover from wait error due to already removed object
-			return apiManager.DeleteObjects(ctx, obj)
+			return apiManager.DeleteResources(ctx, obj)
 		},
 	}
 )

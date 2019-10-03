@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mgoltzsche/k8spkg/pkg/model"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -47,20 +47,20 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 	if pkgName == "" {
 		return nil, errors.New("no package name provided")
 	}
-	objects, err := m.objects(ctx, false, namespace, pkgName)
+	resources, err := m.resources(ctx, false, namespace, pkgName)
 	if err != nil {
 		return
 	}
-	if len(objects) == 0 {
+	if len(resources) == 0 {
 		return nil, &notFoundError{errors.Errorf("package %q not found", pkgName)}
 	}
-	infos, _ := PackageInfosFromObjects(objects)
+	infos, _ := PackageInfosFromResources(resources)
 	if len(infos) != 1 {
 		panic("len(pkgInfos) != 1")
 	}
-	pkg = &K8sPackage{infos[0], objects}
+	pkg = &K8sPackage{infos[0], resources}
 	namespaces := pkg.Namespaces
-	namespace = detectNamespace(namespace, objects)
+	namespace = detectNamespace(namespace, resources)
 	if len(namespaces) == 0 || (len(namespaces) == 1 && namespaces[0] == namespace) {
 		return
 	}
@@ -78,10 +78,10 @@ func (m *PackageManager) State(ctx context.Context, namespace, pkgName string) (
 	}
 	for _, ns := range namespaces {
 		if ns != namespace {
-			if objects, err = m.kubectlGetPkg(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
+			if resources, err = m.kubectlGetPkg(ctx, namespacedTypeNames, false, ns, pkgName); err != nil {
 				return
 			}
-			pkg.Objects = append(pkg.Objects, objects...)
+			pkg.Resources = append(pkg.Resources, resources...)
 		}
 	}
 	return
@@ -94,7 +94,7 @@ func (m *PackageManager) apiResources(ctx context.Context) (t []*APIResourceType
 	return m.resourceTypes, err
 }
 
-func (m *PackageManager) objects(ctx context.Context, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) resources(ctx context.Context, allNamespaces bool, namespace, pkgName string) (objects resource.K8sResourceList, err error) {
 	resTypes, err := m.apiResources(ctx)
 	if err != nil {
 		return
@@ -106,7 +106,7 @@ func (m *PackageManager) objects(ctx context.Context, allNamespaces bool, namesp
 	return m.kubectlGetPkg(ctx, typeNames, allNamespaces, namespace, pkgName)
 }
 
-func detectNamespace(namespace string, objects []*model.K8sObject) string {
+func detectNamespace(namespace string, objects resource.K8sResourceList) string {
 	if namespace == "" {
 		for _, o := range objects {
 			if o.Namespace != "" {
@@ -119,15 +119,15 @@ func detectNamespace(namespace string, objects []*model.K8sObject) string {
 
 func (m *PackageManager) List(ctx context.Context, allNamespaces bool, namespace string) (pkgs []*PackageInfo, err error) {
 	// TODO: fetch necessary values only instead of whole objects
-	obj, err := m.objects(ctx, allNamespaces, namespace, "")
+	obj, err := m.resources(ctx, allNamespaces, namespace, "")
 	if err != nil {
 		return
 	}
-	pkgs, _ = PackageInfosFromObjects(obj)
+	pkgs, _ = PackageInfosFromResources(obj)
 	return
 }
 
-func (m *PackageManager) kubectlGetPkg(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) kubectlGetPkg(ctx context.Context, types []string, allNamespaces bool, namespace, pkgName string) (objects []*resource.K8sResource, err error) {
 	typeCsv := strings.Join(types, ",")
 	args := []string{typeCsv}
 	if pkgName != "" {
@@ -142,7 +142,7 @@ func (m *PackageManager) kubectlGetPkg(ctx context.Context, types []string, allN
 	return m.kubectlGet(ctx, namespace, args)
 }
 
-func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args []string) (objects []*model.K8sObject, err error) {
+func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args []string) (resources resource.K8sResourceList, err error) {
 	reader, writer := io.Pipe()
 	defer func() {
 		if e := reader.Close(); e != nil && err == nil {
@@ -153,7 +153,7 @@ func (m *PackageManager) kubectlGet(ctx context.Context, namespace string, args 
 	errc := make(chan error)
 	go func() {
 		var e error
-		objects, e = model.FromReader(reader)
+		resources, e = resource.FromReader(reader)
 		errc <- e
 		writer.CloseWithError(e)
 	}()
@@ -188,7 +188,7 @@ func getTimeout(ctx context.Context) string {
 func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool) (err error) {
 	logrus.Infof("Applying package %s", pkg.Name)
 	startTime := time.Now()
-	reader := manifestReader(pkg.Objects)
+	reader := manifestReader(pkg.Resources)
 	pkgLabel := PKG_NAME_LABEL + "=" + pkg.Name
 
 	args := []string{"apply", "-o", "yaml", "--wait=true", "--timeout=" + getTimeout(ctx), "-f", "-", "--record"}
@@ -197,10 +197,10 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 		args = append(args, "-l", pkgLabel, "--prune")
 	}
 	pReader, pWriter := io.Pipe()
-	objCh := make(chan []*model.K8sObject)
+	objCh := make(chan resource.K8sResourceList)
 	errCh := make(chan error)
 	go func() {
-		obj, e := model.FromReader(pReader)
+		obj, e := resource.FromReader(pReader)
 		pReader.CloseWithError(e)
 		objCh <- obj
 		errCh <- e
@@ -228,8 +228,8 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 }
 
 func (m *PackageManager) awaitChangesApplied(ctx context.Context, pkg *K8sPackage, startTime time.Time) (err error) {
-	obj := pkg.Objects
-	uidMap := map[string]*model.K8sObject{}
+	obj := pkg.Resources
+	uidMap := map[string]*resource.K8sResource{}
 	allUids := map[string]bool{}
 	for _, o := range obj {
 		uidMap[o.Uid] = o
@@ -242,7 +242,7 @@ func (m *PackageManager) awaitChangesApplied(ctx context.Context, pkg *K8sPackag
 	if pkg, err = m.State(ctx, ns, pkg.Name); err != nil {
 		return
 	}
-	for _, o := range pkg.Objects {
+	for _, o := range pkg.Resources {
 		allUids[o.Uid] = true
 		if uidMap[o.Uid] != nil {
 			obj = append(obj, o)
@@ -317,16 +317,15 @@ func logEvent(evt *Event, startTime time.Time) {
 	}
 }
 
-func (m *PackageManager) objectState(ctx context.Context, obj []*model.K8sObject) (state []*model.K8sObject, err error) {
-	nsMap, nsOrder := groupByNamespace(obj)
-	for _, ns := range nsOrder {
-		ol := nsMap[ns]
+func (m *PackageManager) resourceState(ctx context.Context, obj resource.K8sResourceList) (state resource.K8sResourceList, err error) {
+	for _, ns := range obj.GroupByNamespace() {
+		ol := ns.Resources
 		args := make([]string, len(ol)+1)
 		args[0] = "--ignore-not-found"
 		for i, o := range ol {
 			args[i+1] = strings.ToLower(o.Kind) + "/" + o.Name
 		}
-		ol, e := m.kubectlGet(ctx, ns, args)
+		ol, e := m.kubectlGet(ctx, ns.Key, args)
 		if e == nil {
 			state = append(state, ol...)
 		} else if err == nil {
@@ -342,8 +341,8 @@ func (m *PackageManager) objectState(ctx context.Context, obj []*model.K8sObject
 	return
 }
 
-func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObject) (err error) {
-	obj = filter(obj, func(o *model.K8sObject) bool {
+func (m *PackageManager) awaitRollout(ctx context.Context, obj resource.K8sResourceList) (err error) {
+	obj = obj.Filter(func(o *resource.K8sResource) bool {
 		return o.Kind == "Deployment" || o.Kind == "DaemonSet" || o.Kind == "StatefulSet"
 	})
 	for _, o := range obj {
@@ -365,11 +364,11 @@ func (m *PackageManager) awaitRollout(ctx context.Context, obj []*model.K8sObjec
 	return
 }
 
-func (m *PackageManager) describeFailureCause(ctx context.Context, obj []*model.K8sObject) (msg string, err error) {
-	if obj, err = m.objectState(ctx, obj); err != nil {
+func (m *PackageManager) describeFailureCause(ctx context.Context, obj resource.K8sResourceList) (msg string, err error) {
+	if obj, err = m.resourceState(ctx, obj); err != nil {
 		return
 	}
-	failedObj := []*model.K8sObject{}
+	failedObj := []*resource.K8sResource{}
 	condMsgs := []string{}
 	for _, o := range obj {
 		var failedConds []string
@@ -410,9 +409,9 @@ func (m *PackageManager) describeFailureCause(ctx context.Context, obj []*model.
 	return
 }
 
-func (m *PackageManager) awaitCondition(ctx context.Context, obj []*model.K8sObject) (err error) {
+func (m *PackageManager) awaitCondition(ctx context.Context, obj resource.K8sResourceList) (err error) {
 	cmd := newKubectlCmd(ctx, m.kubeconfigFile)
-	ctMap := map[string][]*model.K8sObject{}
+	ctMap := map[string][]*resource.K8sResource{}
 	types := []string{}
 	for _, o := range obj {
 		for _, c := range o.Conditions {
@@ -434,10 +433,9 @@ func (m *PackageManager) awaitCondition(ctx context.Context, obj []*model.K8sObj
 	return
 }
 
-func kubectlWait(cmd *kubectlCmd, obj []*model.K8sObject, forExpr string) (err error) {
-	nsMap, nsOrder := groupByNamespace(obj)
-	for _, ns := range nsOrder {
-		if e := kubectlWaitNames(cmd, ns, names(nsMap[ns]), forExpr); e != nil {
+func kubectlWait(cmd *kubectlCmd, obj resource.K8sResourceList, forExpr string) (err error) {
+	for _, ns := range obj.GroupByNamespace() {
+		if e := kubectlWaitNames(cmd, ns.Key, names(ns.Resources), forExpr); e != nil {
 			err = e
 		}
 		select {
@@ -463,51 +461,29 @@ func kubectlWaitNames(cmd *kubectlCmd, ns string, names []string, forExpr string
 	return
 }
 
-func filter(obj []*model.K8sObject, filter func(*model.K8sObject) bool) (filtered []*model.K8sObject) {
-	for _, o := range obj {
-		if filter(o) {
-			filtered = append(filtered, o)
-		}
-	}
-	return
-}
-
-func groupByNamespace(obj []*model.K8sObject) (nsMap map[string][]*model.K8sObject, nsOrder []string) {
-	nsMap = map[string][]*model.K8sObject{}
-	nsOrder = []string{}
-	for _, o := range obj {
-		l := nsMap[o.Namespace]
-		if l == nil {
-			nsOrder = append(nsOrder, o.Namespace)
-		}
-		nsMap[o.Namespace] = append(l, o)
-	}
-	return
-}
-
 func (m *PackageManager) Delete(ctx context.Context, namespace, pkgName string) (err error) {
 	pkg, err := m.State(ctx, namespace, pkgName)
 	if err != nil {
 		return
 	}
-	err = m.DeleteObjects(ctx, pkg.Objects)
+	err = m.DeleteResources(ctx, pkg.Resources)
 	return errors.Wrapf(err, "delete package %s", pkgName)
 }
 
-func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObject) (err error) {
+func (m *PackageManager) DeleteResources(ctx context.Context, obj resource.K8sResourceList) (err error) {
 	defer m.clearResourceTypeCache()
 	fqnMap := map[string]bool{}
-	crds := filter(obj, func(o *model.K8sObject) bool { return o.Kind == "CustomResourceDefinition" })
+	crds := obj.Filter(func(o *resource.K8sResource) bool { return o.Kind == "CustomResourceDefinition" })
 	mapFqns(crds, fqnMap)
 	crdMap := crdGvkMap(crds)
-	crdRes := filter(obj, func(o *model.K8sObject) bool { return crdMap[o.Gvk()] })
+	crdRes := obj.Filter(func(o *resource.K8sResource) bool { return crdMap[o.Gvk()] })
 	mapFqns(crdRes, fqnMap)
-	namespaced := filter(obj, func(o *model.K8sObject) bool { return o.Namespace != "" && !fqnMap[o.ID()] })
+	namespaced := obj.Filter(func(o *resource.K8sResource) bool { return o.Namespace != "" && !fqnMap[o.ID()] })
 	mapFqns(namespaced, fqnMap)
-	other := filter(obj, func(o *model.K8sObject) bool { return !fqnMap[o.ID()] })
-	orphanObj := []*model.K8sObject{}
+	other := obj.Filter(func(o *resource.K8sResource) bool { return !fqnMap[o.ID()] })
+	orphanObj := []*resource.K8sResource{}
 
-	deletionOrder := [][]*model.K8sObject{
+	deletionOrder := []resource.K8sResourceList{
 		crdRes,
 		namespaced,
 		other,
@@ -516,10 +492,10 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 
 	var waitErr error
 	for _, items := range deletionOrder {
-		nsMap, nsOrder := groupByNamespace(items)
-		for _, ns := range nsOrder {
-			nonContained := filter(nsMap[ns], isNoContainedObject)
-			if e := m.deleteObjectNames(ctx, ns, names(nonContained)); e != nil && err == nil {
+		namespaces := items.GroupByNamespace()
+		for _, ns := range namespaces {
+			nonContained := ns.Resources.Filter(isNoContainedObject)
+			if e := m.deleteObjectNames(ctx, ns.Key, names(nonContained)); e != nil && err == nil {
 				err = e
 			}
 			select {
@@ -528,13 +504,13 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 			default:
 			}
 		}
-		for _, ns := range nsOrder {
+		for _, ns := range namespaces {
 			cmd := newKubectlCmd(ctx, m.kubeconfigFile)
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
-			ol := nsMap[ns]
-			if e := kubectlWaitNames(cmd, ns, names(ol), "delete"); e != nil {
+			ol := ns.Resources
+			if e := kubectlWaitNames(cmd, ns.Key, names(ol), "delete"); e != nil {
 				orphanObj = append(orphanObj, ol...)
 				if waitErr == nil {
 					msg := e.Error()
@@ -559,9 +535,9 @@ func (m *PackageManager) DeleteObjects(ctx context.Context, obj []*model.K8sObje
 	if err == nil && waitErr != nil {
 		// Workaround to exit successfully in case `kubectl wait` did not find an already deleted resource.
 		// This should be solved within kubectl so that it does not exit with an error when waiting for deletion of a deleted resource.
-		orphanObj, _ = m.objectState(ctx, orphanObj)
+		orphanObj, _ = m.resourceState(ctx, orphanObj)
 		if len(orphanObj) != 0 {
-			err = errors.Errorf("%d/%d objects could not be deleted: %+v", len(obj)-len(orphanObj), len(obj), names(orphanObj))
+			err = errors.Errorf("%d/%d resources could not be deleted: %+v", len(obj)-len(orphanObj), len(obj), names(orphanObj))
 		}
 	}
 	return
@@ -578,11 +554,11 @@ func (m *PackageManager) deleteObjectNames(ctx context.Context, ns string, names
 	return newKubectlCmd(ctx, m.kubeconfigFile).Run(append(args, names...)...)
 }
 
-func isNoContainedObject(o *model.K8sObject) bool {
+func isNoContainedObject(o *resource.K8sResource) bool {
 	return len(o.OwnerReferences()) == 0
 }
 
-func crdGvkMap(crds []*model.K8sObject) (m map[string]bool) {
+func crdGvkMap(crds resource.K8sResourceList) (m map[string]bool) {
 	m = map[string]bool{}
 	for _, o := range crds {
 		m[o.CrdGvk()] = true
@@ -590,13 +566,13 @@ func crdGvkMap(crds []*model.K8sObject) (m map[string]bool) {
 	return
 }
 
-func mapFqns(obj []*model.K8sObject, fqns map[string]bool) {
+func mapFqns(obj resource.K8sResourceList, fqns map[string]bool) {
 	for _, o := range obj {
 		fqns[o.ID()] = true
 	}
 }
 
-func names(obj []*model.K8sObject) (names []string) {
+func names(obj resource.K8sResourceList) (names []string) {
 	names = make([]string, len(obj))
 	for i, o := range obj {
 		names[i] = strings.ToLower(o.Kind) + "/" + o.Name
@@ -604,10 +580,10 @@ func names(obj []*model.K8sObject) (names []string) {
 	return
 }
 
-func manifestReader(objects []*model.K8sObject) io.ReadCloser {
+func manifestReader(resources resource.K8sResourceList) io.ReadCloser {
 	reader, writer := io.Pipe()
 	go func() {
-		writer.CloseWithError(model.WriteManifest(objects, writer))
+		writer.CloseWithError(resources.WriteYaml(writer))
 	}()
 	return reader
 }

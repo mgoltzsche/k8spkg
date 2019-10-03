@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mgoltzsche/k8spkg/pkg/model"
+	resource "github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/mgoltzsche/k8spkg/pkg/transform"
 	"github.com/pkg/errors"
 )
@@ -15,14 +15,14 @@ import (
 // K8sPackage define a collection of objects and their package metadata
 type K8sPackage struct {
 	*PackageInfo
-	Objects []*model.K8sObject
+	Resources resource.K8sResourceList
 }
 
 // TransformedObjects read API objects from reader and modify their name and namespace if provided
-func TransformedObjects(reader io.Reader, namespace, name string) (obj []*model.K8sObject, err error) {
+func TransformedObjects(reader io.Reader, namespace, name string) (obj []*resource.K8sResource, err error) {
 	var namespaces []string
 	if namespace == "" {
-		if obj, err = model.FromReader(reader); err != nil {
+		if obj, err = resource.FromReader(reader); err != nil {
 			return
 		}
 		namespaces = containedNamespaces(obj)
@@ -34,7 +34,7 @@ func TransformedObjects(reader io.Reader, namespace, name string) (obj []*model.
 	}
 	transformed := manifest2pkgobjects(reader, namespace, name, namespaces)
 	defer transformed.Close()
-	obj, err = model.FromReader(transformed)
+	obj, err = resource.FromReader(transformed)
 	if err != nil {
 		return nil, errors.Wrap(err, "manifest2pkg")
 	}
@@ -49,7 +49,7 @@ func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage,
 	if err != nil {
 		return
 	}
-	pkgs, err := PackageInfosFromObjects(obj)
+	pkgs, err := PackageInfosFromResources(obj)
 	if err != nil {
 		return
 	}
@@ -92,7 +92,7 @@ func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []
 	return pReader
 }
 
-func containedNamespaces(obj []*model.K8sObject) (ns []string) {
+func containedNamespaces(obj []*resource.K8sResource) (ns []string) {
 	nsMap := map[string]bool{}
 	for _, o := range obj {
 		if o.Namespace != "" && !nsMap[o.Namespace] {

@@ -1,9 +1,7 @@
-package model
+package resource
 
 import (
 	"bytes"
-	"fmt"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,7 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func TestK8sObject(t *testing.T) {
+func TestK8sResource(t *testing.T) {
 	manifest := `apiVersion: certmanager.k8s.io/v1alpha1
 kind: Issuer
 metadata:
@@ -69,48 +67,4 @@ status:
 	err = o.WriteYaml(&buf)
 	require.NoError(t, err)
 	assert.Equal(t, "---\n"+manifest, buf.String(), "yamlIn->obj->yamlOut == yamlIn")
-}
-
-func TestK8sObjectFromReader(t *testing.T) {
-	f, err := os.Open("test/k8sobjectlist.yaml")
-	require.NoError(t, err)
-	defer f.Close()
-	ol, err := FromReader(f)
-	require.NoError(t, err)
-	names := []string{}
-	for _, o := range ol {
-		names = append(names, o.Name)
-	}
-	expectedNames := []string{"certificates.certmanager.k8s.io", "somedeployment", "myapiservice", "mydeployment", "onemorecert", "cert-manager-webhook"}
-	assert.Equal(t, expectedNames, names, "flattened object names")
-}
-
-func TestWriteManifest(t *testing.T) {
-	manifest := ""
-	for i := 0; i < 2; i++ {
-		manifest += `---
-apiVersion: some.api/aversion
-kind: SomeKind
-metadata:
-  name: object` + fmt.Sprintf("%d", i) + `
-  namespace: myns
-  sth: else
-`
-	}
-	obj := make([]*K8sObject, 2)
-	for i := 0; i < 2; i++ {
-		obj[i] = FromMap(map[string]interface{}{
-			"apiVersion": "some.api/aversion",
-			"kind":       "SomeKind",
-			"metadata": map[string]interface{}{
-				"name":      fmt.Sprintf("object%d", i),
-				"namespace": "myns",
-				"sth":       "else",
-			},
-		})
-	}
-	var buf bytes.Buffer
-	err := WriteManifest(obj, &buf)
-	require.NoError(t, err)
-	assert.Equal(t, manifest, buf.String())
 }
