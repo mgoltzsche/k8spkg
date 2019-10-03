@@ -2,6 +2,8 @@
 package builtin
 
 import (
+	"fmt"
+
 	"sigs.k8s.io/kustomize/v3/pkg/ifc"
 	"sigs.k8s.io/kustomize/v3/pkg/resid"
 	"sigs.k8s.io/kustomize/v3/pkg/resmap"
@@ -16,11 +18,6 @@ import (
 type NamespaceTransformerPlugin struct {
 	types.ObjectMeta `json:"metadata,omitempty" yaml:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 	FieldSpecs       []config.FieldSpec `json:"fieldSpecs,omitempty" yaml:"fieldSpecs,omitempty"`
-}
-
-//noinspection GoUnusedGlobalVariable
-func NewNamespaceTransformerPlugin() *NamespaceTransformerPlugin {
-	return &NamespaceTransformerPlugin{}
 }
 
 func (p *NamespaceTransformerPlugin) Config(
@@ -50,6 +47,11 @@ func (p *NamespaceTransformerPlugin) Transform(m resmap.ResMap) error {
 			if err != nil {
 				return err
 			}
+		}
+
+		matches := m.GetMatchingResourcesByCurrentId(r.CurId().Equals)
+		if len(matches) != 1 {
+			return fmt.Errorf("namespace tranformation produces ID conflict: %#v", matches)
 		}
 	}
 	return nil
@@ -121,4 +123,8 @@ func (o *NamespaceTransformerPlugin) changeNamespace(
 			return in, nil
 		}
 	}
+}
+
+func NewNamespaceTransformerPlugin() resmap.TransformerPlugin {
+	return &NamespaceTransformerPlugin{}
 }

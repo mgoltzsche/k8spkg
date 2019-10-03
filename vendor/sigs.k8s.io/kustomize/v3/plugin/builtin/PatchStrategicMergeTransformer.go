@@ -15,12 +15,7 @@ type PatchStrategicMergeTransformerPlugin struct {
 	rf            *resmap.Factory
 	loadedPatches []*resource.Resource
 	Paths         []types.PatchStrategicMerge `json:"paths,omitempty" yaml:"paths,omitempty"`
-	Patches       string                      `json:patches,omitempty" yaml:"patches,omitempty"`
-}
-
-//noinspection GoUnusedGlobalVariable
-func NewPatchStrategicMergeTransformerPlugin() *PatchStrategicMergeTransformerPlugin {
-	return &PatchStrategicMergeTransformerPlugin{}
+	Patches       string                      `json:"patches,omitempty" yaml:"patches,omitempty"`
 }
 
 func (p *PatchStrategicMergeTransformerPlugin) Config(
@@ -35,11 +30,18 @@ func (p *PatchStrategicMergeTransformerPlugin) Config(
 		return fmt.Errorf("empty file path and empty patch content")
 	}
 	if len(p.Paths) != 0 {
-		res, err := p.rf.RF().SliceFromPatches(ldr, p.Paths)
-		if err != nil {
-			return err
+		for _, onePath := range p.Paths {
+			res, err := p.rf.RF().SliceFromBytes([]byte(onePath))
+			if err == nil {
+				p.loadedPatches = append(p.loadedPatches, res...)
+				continue
+			}
+			res, err = p.rf.RF().SliceFromPatches(ldr, []types.PatchStrategicMerge{onePath})
+			if err != nil {
+				return err
+			}
+			p.loadedPatches = append(p.loadedPatches, res...)
 		}
-		p.loadedPatches = res
 	}
 	if p.Patches != "" {
 		res, err := p.rf.RF().SliceFromBytes([]byte(p.Patches))
@@ -80,4 +82,8 @@ func (p *PatchStrategicMergeTransformerPlugin) Transform(m resmap.ResMap) error 
 		}
 	}
 	return nil
+}
+
+func NewPatchStrategicMergeTransformerPlugin() resmap.TransformerPlugin {
+	return &PatchStrategicMergeTransformerPlugin{}
 }

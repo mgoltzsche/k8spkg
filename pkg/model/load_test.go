@@ -64,3 +64,12 @@ func TestManifestReader(t *testing.T) {
 		assert.Equal(t, c.expectedCount, count, "%s object count", c.source)
 	}
 }
+
+func TestManifestReaderError(t *testing.T) {
+	ctx := context.Background()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	reader := ManifestReader(ctx, "some-none-existing-file", wd)
+	_, err = ioutil.ReadAll(reader)
+	require.Error(t, err)
+}

@@ -20,11 +20,6 @@ type ReplicaCountTransformerPlugin struct {
 	FieldSpecs []config.FieldSpec `json:"fieldSpecs,omitempty" yaml:"fieldSpecs,omitempty"`
 }
 
-//noinspection GoUnusedGlobalVariable
-func NewReplicaCountTransformerPlugin() *ReplicaCountTransformerPlugin {
-	return &ReplicaCountTransformerPlugin{}
-}
-
 func (p *ReplicaCountTransformerPlugin) Config(
 	ldr ifc.Loader, rf *resmap.Factory, c []byte) (err error) {
 
@@ -34,8 +29,15 @@ func (p *ReplicaCountTransformerPlugin) Config(
 }
 
 func (p *ReplicaCountTransformerPlugin) Transform(m resmap.ResMap) error {
+
+	found := false
 	for i, replicaSpec := range p.FieldSpecs {
-		for _, res := range m.GetMatchingResourcesByOriginalId(p.createMatcher(i)) {
+		matcher := p.createMatcher(i)
+		matchOriginal := m.GetMatchingResourcesByOriginalId(matcher)
+		matchCurrent := m.GetMatchingResourcesByCurrentId(matcher)
+
+		for _, res := range append(matchOriginal, matchCurrent...) {
+			found = true
 			err := transformers.MutateField(
 				res.Map(), replicaSpec.PathSlice(),
 				replicaSpec.CreateIfNotPresent, p.addReplicas)
@@ -43,6 +45,15 @@ func (p *ReplicaCountTransformerPlugin) Transform(m resmap.ResMap) error {
 				return err
 			}
 		}
+	}
+
+	if !found {
+		gvks := make([]string, len(p.FieldSpecs))
+		for i, replicaSpec := range p.FieldSpecs {
+			gvks[i] = replicaSpec.Gvk.String()
+		}
+		return fmt.Errorf("Resource with name %s does not match a config with the following GVK %v",
+			p.Replica.Name, gvks)
 	}
 
 	return nil
@@ -71,4 +82,8 @@ func (p *ReplicaCountTransformerPlugin) addReplicas(in interface{}) (interface{}
 		return nil, fmt.Errorf("%#v is expected to be %T", in, m)
 	}
 	return p.Replica.Count, nil
+}
+
+func NewReplicaCountTransformerPlugin() resmap.TransformerPlugin {
+	return &ReplicaCountTransformerPlugin{}
 }
