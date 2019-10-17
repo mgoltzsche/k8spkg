@@ -10,11 +10,6 @@ items:
       app.kubernetes.io/part-of: somepkg
       k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
   # ...
-  spec:
-    group: certmanager.k8s.io
-    version: v1alpha1
-    names:
-      kind: Certificate
 - apiVersion: v1
   kind: Deployment
   metadata:
@@ -24,6 +19,16 @@ items:
       app.kubernetes.io/part-of: somepkg
       k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
     name: somedeployment
+    namespace: mynamespace
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    creationTimestamp: "2019-06-02T00:57:37Z"
+    labels:
+      k8s-app: kube-dns
+      app.kubernetes.io/part-of: somepkg
+      k8spkg.mgoltzsche.github.com/namespaces: cert-manager.mynamespace
+    name: somedeployment-pod-x
     namespace: mynamespace
   spec:
     containers:
@@ -35,13 +40,6 @@ items:
       - containerPort: 53
         name: dns
         protocol: UDP
-    selector:
-      matchLabels:
-        app.kubernetes.io/part-of: somepkg
-    template:
-      metadata:
-        labels:
-          app.kubernetes.io/part-of: somepkg
 - apiVersion: v1
   kind: List
   items:
@@ -57,7 +55,7 @@ items:
   kind: Deployment
   metadata:
     name: mydeployment
-    namespace: mynamespace
+    namespace: cert-manager
     labels:
       app.kubernetes.io/part-of: somepkg
   spec:

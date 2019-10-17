@@ -1,6 +1,7 @@
 package resource
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -12,13 +13,57 @@ import (
 type rawK8sResource map[string]interface{}
 
 type K8sResource struct {
+	K8sResourceRef
 	raw        rawK8sResource
-	APIVersion string
-	Kind       string
-	Namespace  string
-	Name       string
-	Uid        string
-	Conditions []*K8sResourceCondition
+	uid        string
+	conditions []*K8sResourceCondition
+}
+
+func Resource(name K8sResourceRef, attrs map[string]interface{}) *K8sResource {
+	apiVersion := name.APIVersion()
+	if name.APIGroup() != "" {
+		apiVersion = name.APIGroup() + "/" + apiVersion
+	}
+	attrs["apiVersion"] = apiVersion
+	attrs["kind"] = name.Kind()
+	meta := map[string]interface{}{}
+	meta["name"] = name.Name()
+	meta["namespace"] = name.Namespace()
+	attrs["metadata"] = meta
+	return &K8sResource{name, attrs, "", nil}
+}
+
+type ResourceEvent struct {
+	Resource *K8sResource
+	Error    error
+}
+
+// TODO: test
+func FromJsonStream(reader io.Reader) <-chan ResourceEvent {
+	ch := make(chan ResourceEvent)
+	go func() {
+		var err error
+		dec := json.NewDecoder(reader)
+		o := map[string]interface{}{}
+		l := make([]*K8sResource, 0, 1)
+		for ; err == nil; err = dec.Decode(&o) {
+			if len(o) > 0 {
+				l = l[:0]
+				if err = appendFlattened(o, &l); err != nil {
+					break
+				}
+				for _, lo := range l {
+					ch <- ResourceEvent{lo, nil}
+				}
+				o = map[string]interface{}{}
+			}
+		}
+		if err != nil && err != io.EOF {
+			ch <- ResourceEvent{nil, err}
+		}
+		close(ch)
+	}()
+	return ch
 }
 
 type K8sResourceCondition struct {
@@ -44,40 +89,35 @@ func FromMap(o map[string]interface{}) *K8sResource {
 			})
 		}
 	}
+	apiVersion := asString(o["apiVersion"])
+	apiGroup := ""
+	if gv := strings.SplitN(apiVersion, "/", 2); len(gv) == 2 {
+		apiGroup = gv[0]
+		apiVersion = gv[1]
+	}
 	return &K8sResource{
-		raw:        o,
-		APIVersion: asString(o["apiVersion"]),
-		Kind:       asString(o["kind"]),
-		Namespace:  asString(meta["namespace"]),
-		Name:       asString(meta["name"]),
-		Uid:        asString(meta["uid"]),
-		Conditions: conditions,
+		raw: o,
+		K8sResourceRef: &k8sResourceRef{
+			apiVersion: apiVersion,
+			apiGroup:   apiGroup,
+			kind:       asString(o["kind"]),
+			name:       asString(meta["name"]),
+			namespace:  asString(meta["namespace"]),
+		},
+		uid:        asString(meta["uid"]),
+		conditions: conditions,
 	}
 }
 
 func (o *K8sResource) Validate() (err error) {
-	if o.APIVersion == "" || o.Kind == "" || o.Name == "" {
+	if o.APIVersion() == "" || o.Kind() == "" || o.Name() == "" {
 		err = errors.Errorf("invalid API object: apiVersion, kind or name are not set: %+v", o.raw)
 	}
 	return
 }
 
-func appendFlattened(o rawK8sResource, flattened *[]*K8sResource) (err error) {
-	if o["kind"] != "List" {
-		entry := FromMap(o)
-		err = entry.Validate()
-		*flattened = append(*flattened, entry)
-		return
-	}
-	ol, err := items(o)
-	if err == nil {
-		for _, o := range ol {
-			if err = appendFlattened(o, flattened); err != nil {
-				return
-			}
-		}
-	}
-	return
+func (o *K8sResource) Conditions() []*K8sResourceCondition {
+	return o.conditions
 }
 
 // Returns 'items' slice
@@ -93,12 +133,12 @@ func items(o rawK8sResource) (items []rawK8sResource, err error) {
 	return
 }
 
-func (o *K8sResource) ID() string {
-	return o.Namespace + "/" + o.Gvk() + "/" + o.Name
+func (o *K8sResource) Spec() (l map[string]interface{}) {
+	return asMap(o.raw["spec"])
 }
 
-func (o *K8sResource) Gvk() string {
-	return o.APIVersion + "/" + o.Kind
+func (o *K8sResource) SetSpec(spec map[string]interface{}) {
+	o.raw["spec"] = spec
 }
 
 func (o *K8sResource) Labels() (l map[string]string) {
@@ -109,11 +149,13 @@ func (o *K8sResource) Labels() (l map[string]string) {
 	return
 }
 
-func (o *K8sResource) CrdGvk() string {
+func (o *K8sResource) CrdQualifiedKind() string {
 	group := o.getString("spec.group")
-	version := o.getString("spec.version")
-	kind := o.getString("spec.names.kind")
-	return group + "/" + version + "/" + kind
+	kind := strings.ToLower(o.getString("spec.names.kind"))
+	if group != "" {
+		kind += "." + group
+	}
+	return kind
 }
 
 type OwnerReference struct {
@@ -139,7 +181,7 @@ func (o *K8sResource) WriteYaml(writer io.Writer) (err error) {
 	if _, err = writer.Write([]byte("---\n")); err == nil {
 		err = yaml.NewEncoder(writer).Encode(o.raw)
 	}
-	return errors.Wrapf(err, "encode k8sobject %s/%s to yaml", o.Kind, o.Name)
+	return errors.Wrapf(err, "encode k8sobject %s to yaml", o.ID())
 }
 
 func lookup(o map[string]interface{}, path string) (r interface{}) {

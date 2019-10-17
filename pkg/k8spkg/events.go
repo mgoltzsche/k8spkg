@@ -1,7 +1,6 @@
 package k8spkg
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -13,10 +12,8 @@ func EventChannel(ctx context.Context, kubeconfigFile string) (ch chan *Event, e
 	args := []string{"get", "event", "--watch", "-o", "json", "--all-namespaces", "--sort-by=.metadata.lastTimestamp"}
 	pReader, pWriter := io.Pipe()
 	go func() {
-		var stderr bytes.Buffer
 		cmd := newKubectlCmd(ctx, kubeconfigFile)
 		cmd.Stdout = pWriter
-		cmd.Stderr = &stderr
 		e := cmd.Run(args...)
 		pWriter.CloseWithError(e)
 	}()

@@ -16,21 +16,23 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"os"
 
-	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/spf13/cobra"
 )
 
 var (
-	manifestCmd = &cobra.Command{
-		Use:   "manifest",
-		Short: "Prints a rendered package manifest",
-		Long:  "Prints the merged and labeled manifest",
+	buildCmd = &cobra.Command{
+		Use:   "build",
+		Short: "Renders a package manifest to stdout",
+		Long:  "Renders a labeled package manifest to stdout",
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			if len(args) != 0 {
+				return fmt.Errorf("no arguments supported but provided %+v", args)
+			}
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
-			pkg, err := lookupPackage(ctx, args, apiManager)
+			pkg, err := sourcePackage(ctx)
 			if err != nil {
 				return
 			}
@@ -40,6 +42,6 @@ var (
 )
 
 func init() {
-	addSourceNameFlags(manifestCmd.Flags())
-	rootCmd.AddCommand(manifestCmd)
+	addSourceNameFlags(buildCmd.Flags())
+	rootCmd.AddCommand(buildCmd)
 }

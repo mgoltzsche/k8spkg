@@ -1,0 +1,10 @@
+apiVersion: mgoltzsche.github.com/v1alpha1
+kind: Application
+metadata:
+  name: name
+  namespace: myns
+spec:
+  resources:
+  - apiVersion: apps/v1
+    kind: Deployment
+    name: mydeployment

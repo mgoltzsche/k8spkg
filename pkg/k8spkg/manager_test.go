@@ -1,238 +1,118 @@
 package k8spkg
 
 import (
-	"bytes"
 	"context"
-	"io/ioutil"
-	"strings"
+	"fmt"
+	"os"
 	"testing"
 
+	"github.com/mgoltzsche/k8spkg/pkg/client/mock"
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	testNamespace               = "myns"
-	kubectlGetCallPrfx          = "get -o yaml "
-	kubectlGetCall              = kubectlGetCallPrfx + resTypesStr + " -l app.kubernetes.io/part-of=somepkg -n " + testNamespace
-	kubectlGetCallNsCertManager = kubectlGetCallPrfx + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n cert-manager"
-	kubectlGetCallNsMynamespace = kubectlGetCallPrfx + namespacedResTypesStr + " -l app.kubernetes.io/part-of=somepkg -n mynamespace"
-	kubectlGetCallNsEmpty       = kubectlGetCallPrfx + resTypesStr + " -l app.kubernetes.io/part-of=somepkg"
-
-	kubectlApplyCall           = "apply -o yaml --wait=true --timeout=2m0s -f - --record"
-	kubectlApplyCallPrune      = kubectlApplyCall + " -l app.kubernetes.io/part-of=somepkg --prune"
-	kubectlApplyCallKubeconfig = "--kubeconfig kubeconfig.yaml " + kubectlApplyCallPrune
-	kubectlGetObjStatusCall    = kubectlGetCallPrfx + "customresourcedefinition/certificates.certmanager.k8s.io apiservice/myapiservice"
-	kubectlWatchEventsCall     = "get event --watch -o json --all-namespaces --sort-by=.metadata.lastTimestamp"
-)
-
-func TestPackageManagerApply(t *testing.T) {
-	b, err := ioutil.ReadFile("../resource/test/k8sobjectlist.yaml")
+func assertPkgManagerCall(t *testing.T, call func(*PackageManager, *mock.ClientMock) error) {
+	client := mock.NewClientMock()
+	testee := NewPackageManager(client, "")
+	err := call(testee, client)
 	require.NoError(t, err)
-	obj, err := resource.FromReader(bytes.NewReader(b))
-	require.NoError(t, err)
-	pkg := &K8sPackage{&PackageInfo{Name: "somepkg"}, obj}
-
-	// Assert Apply()
-	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
-		expectedCalls := []string{
-			kubectlApplyCallPrune,
-			kubectlResTypeCall,
-			kubectlGetCallNsEmpty,
-			kubectlGetCallNsCertManager,
-			//kubectlGetCallNsMynamespace, (unnecessary since detected as default namespace)
-			//kubectlGetObjStatusCall,
-			//kubectlGetCallPrfx + "deployment/somedeployment deployment/mydeployment -n mynamespace",
-			//kubectlGetCallPrfx + "certificate/onemorecert deployment/cert-manager-webhook -n cert-manager",
-			"rollout status -w --timeout=2m0s -n mynamespace deployment/somedeployment",
-			"rollout status -w --timeout=2m0s -n mynamespace deployment/mydeployment",
-			"rollout status -w --timeout=2m0s -n cert-manager deployment/cert-manager-webhook",
-			"wait --for condition=ready --timeout=2m0s -n cert-manager certificate/onemorecert",
-			"wait --for condition=namesaccepted --timeout=2m0s customresourcedefinition/certificates.certmanager.k8s.io",
-			"wait --for condition=established --timeout=2m0s customresourcedefinition/certificates.certmanager.k8s.io",
-			"wait --for condition=available --timeout=2m0s -n mynamespace deployment/somedeployment deployment/mydeployment",
-			"wait --for condition=available --timeout=2m0s apiservice/myapiservice",
-			"wait --for condition=available --timeout=2m0s -n cert-manager deployment/cert-manager-webhook",
-		}
-		if kubecfgFile != "" {
-			for i, call := range expectedCalls {
-				expectedCalls[i] = "--kubeconfig " + kubecfgFile + " " + call
-			}
-		}
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(stdinFile string) {
-			testee := NewPackageManager(kubecfgFile)
-			err = testee.Apply(context.Background(), pkg, true)
-			assert.NoError(t, err, "Apply()")
-
-			// Assert applied content is complete
-			expected, err := resource.FromReader(bytes.NewReader(b))
-			require.NoError(t, err)
-			var expectedYaml bytes.Buffer
-			for _, o := range expected {
-				o.WriteYaml(&expectedYaml)
-			}
-			appliedYaml, err := ioutil.ReadFile(stdinFile)
-			require.NoError(t, err)
-			assert.Equal(t, expectedYaml.String(), string(appliedYaml), "withLabels(in) == out")
-		})
-	}
-
-	// Assert prune option and kubectl error are passed through
-	expectedCalls := []string{kubectlApplyCall}
-	assertKubectlCalls(t, expectedCalls, 0, func(_ string) {
-		testee := NewPackageManager("")
-		err := testee.Apply(context.Background(), pkg, false)
-		require.Error(t, err, "Apply() should pass through kubectl error")
-	})
+	client.MockErr = fmt.Errorf("error mock")
+	err = call(testee, client)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), client.MockErr.Error(), "error message should contain cause")
 }
 
-func TestPackageManagerState(t *testing.T) {
-	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
+func TestPackageManagerApply(t *testing.T) {
+	f, err := os.Open("../client/mock/watch.json")
+	require.NoError(t, err)
+	defer f.Close()
+	var obj resource.K8sResourceList
+	for evt := range resource.FromJsonStream(f) {
+		require.NoError(t, evt.Error)
+		obj = append(obj, evt.Resource)
+	}
+	//obj := mock.MockResourceList("../resource/test/k8sobjectlist.yaml")
+	pkg := &K8sPackage{&PackageInfo{Name: "somepkg"}, obj}
+	labels := fmt.Sprintf("[%s=%s]", PKG_NAME_LABEL, pkg.Name)
+	for _, ns := range []string{"", "myns"} {
 		expectedCalls := []string{
-			kubectlResTypeCall,
-			kubectlGetCall,
-			kubectlGetCallNsCertManager,
-			kubectlGetCallNsMynamespace,
+			fmt.Sprintf("apply %s/ false []", ns),
+			fmt.Sprintf("apply %s/ %v %s", ns, false, labels), // TODO: test prune
 		}
-		kubecfgPrfx := ""
-		if kubecfgFile != "" {
-			kubecfgPrfx = "--kubeconfig " + kubecfgFile + " "
-			for i, call := range expectedCalls {
-				expectedCalls[i] = kubecfgPrfx + call
-			}
-		}
-		// with kubectl success
-		assertns := func(ns string) func(string) {
-			return func(_ string) {
-				testee := NewPackageManager(kubecfgFile)
-				pkg, err := testee.State(context.Background(), ns, "somepkg")
-				require.NoError(t, err)
-				require.Equal(t, "somepkg", pkg.Name, "pkg name")
-				s := ""
-				for _, o := range pkg.Resources {
-					s += "\n  " + o.ID()
+		for _, byNs := range obj.Refs().GroupByNamespace() {
+			for _, byKind := range byNs.Resources.GroupByKind() {
+				gns := byNs.Key
+				if gns == "" {
+					gns = ns
 				}
-				require.Equal(t, 9, len(pkg.Resources), "amount of loaded objects\nobjects: %s", s)
+				expectedCalls = append(expectedCalls,
+					fmt.Sprintf("watch %s/%s %s", gns, byKind.Key, labels))
 			}
 		}
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(testNamespace))
-		expectedCalls[1] = kubecfgPrfx + kubectlGetCallNsEmpty
-		assertKubectlCalls(t, expectedCalls[:3], 3, assertns(""))
-		// with kubectl error
-		assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			_, err := testee.State(context.Background(), "", "somepkg")
-			assert.Error(t, err)
+		expectedCalls = append(expectedCalls,
+			// default/Pod was already contained within manifest
+			fmt.Sprintf("watch otherns/Pod %s", labels),
+		)
+		obj[len(obj)-1].Conditions()[0].Status = false
+		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
+			testee = NewPackageManager(c, ns)
+			evts := make([]resource.ResourceEvent, len(obj))
+			for i, res := range obj {
+				evts[i] = resource.ResourceEvent{res, c.MockErr}
+			}
+			c.MockWatchEvents = evts
+			err = testee.Apply(context.Background(), pkg, false)
+			require.Error(t, err, "unavailable (last) deployment should cause error")
+			if c.MockErr == nil {
+				require.Equal(t, expectedCalls, c.Calls, "client calls")
+			}
+			evts[len(evts)-1].Resource.Conditions()[0].Status = true
+			c.Calls = c.Calls[:0]
+			if err = testee.Apply(context.Background(), pkg, false); err == nil {
+				require.Equal(t, obj, c.Applied, "applied")
+				require.Equal(t, expectedCalls[:len(expectedCalls)-1], c.Calls, "client calls")
+			}
+			return
 		})
-		/*assertKubectlCalls(t, expectedCalls[:2], 2, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			_, err := testee.State(context.Background(), "", "somepkg")
-			assert.Error(t, err)
-		})*/
+	}
+}
+
+func TestPackageManagerList(t *testing.T) {
+	testApp2 := *testApp
+	testApp2.Name = testApp.Name + "2"
+	appRes := testAppResource(t, testApp, &testApp2)
+	for _, ns := range []string{"", "myns"} {
+		expectedCalls := []string{
+			fmt.Sprintf("get %s/ application.mgoltzsche.github.com []", ns),
+		}
+		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
+			c.MockResources = appRes
+			apps, err := testee.List(context.Background(), ns)
+			if err == nil {
+				require.Equal(t, []*App{testApp, &testApp2}, apps, "retrieved")
+				require.Equal(t, expectedCalls, c.Calls, "client calls")
+			}
+			return
+		})
 	}
 }
 
 func TestPackageManagerDelete(t *testing.T) {
-	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
+	for _, ns := range []string{"", "myns"} {
 		expectedCalls := []string{
-			kubectlResTypeCall,
-			kubectlGetCall,
-			kubectlGetCallNsCertManager,
-			kubectlGetCallNsMynamespace,
-			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true -n cert-manager certificate/onemorecert certificate/mycert",
-			"wait --for delete --timeout=2m0s -n cert-manager certificate/onemorecert certificate/mycert",
-			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true -n mynamespace deployment/somedeployment deployment/mydeployment",
-			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true -n cert-manager deployment/cert-manager-webhook",
-			"wait --for delete --timeout=2m0s -n mynamespace deployment/somedeployment deployment/mydeployment",
-			"wait --for delete --timeout=2m0s -n cert-manager deployment/cert-manager-webhook replicaset/cert-manager-webhook-7444b58c45 pod/cert-manager-webhook-7444b58c45-9cfgh",
-			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true apiservice/myapiservice",
-			"wait --for delete --timeout=2m0s apiservice/myapiservice",
-			"delete --wait=true --timeout=2m0s --cascade=true --ignore-not-found=true customresourcedefinition/certificates.certmanager.k8s.io",
-			"wait --for delete --timeout=2m0s customresourcedefinition/certificates.certmanager.k8s.io",
+			fmt.Sprintf("getresource %s/ application.mgoltzsche.github.com %s", ns, testApp.Name),
+			fmt.Sprintf("delete %s/ [deployment.apps/mydeployment apiservice.apiservice/myapi]", ns),
+			fmt.Sprintf("awaitdeletion %s/ [deployment.apps/mydeployment apiservice.apiservice/myapi]", ns),
+			fmt.Sprintf("delete %s/ [application.mgoltzsche.github.com/%s]", testApp.Namespace, testApp.Name),
 		}
-		kubecfgOpt := ""
-		if kubecfgFile != "" {
-			kubecfgOpt = "--kubeconfig " + kubecfgFile + " "
-			for i, call := range expectedCalls {
-				expectedCalls[i] = kubecfgOpt + call
+		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
+			testee = NewPackageManager(c, ns)
+			c.MockResource = testAppResource(t, testApp)[0]
+			err = testee.Delete(context.Background(), testApp.Name)
+			if err == nil {
+				require.Equal(t, expectedCalls, c.Calls, "client calls")
 			}
-		}
-		// successful deletion
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls), func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			require.NoError(t, testee.Delete(context.Background(), "myns", "somepkg"), "should delete successfully")
-		})
-		// kubectl error on state retrieval should fail
-		assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when resource type retrieval fails")
-		})
-		assertKubectlCalls(t, expectedCalls[:2], 1, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when cluster state retrieval fails")
-		})
-		assertKubectlCalls(t, expectedCalls[:3], 2, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "should fail when cluster state retrieval fails")
-		})
-		// kubectl error during deletion should still attempt to delete other resources
-		assertKubectlCalls(t, expectedCalls, 5, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			require.Error(t, testee.Delete(context.Background(), "myns", "somepkg"), "kubectl error during deletion should still attempt to delete other resources")
-		})
-		// kubectl error while awaiting deletion should be resolved by attempting to lookup objects
-		expectedCalls = append(expectedCalls, kubecfgOpt+"get -o yaml --ignore-not-found customresourcedefinition/certificates.certmanager.k8s.io")
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls)-2, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			require.NoError(t, testee.Delete(context.Background(), "myns", "somepkg"), "kubectl error while awaiting deletion should be resolved by attempting to lookup objects")
-		})
-	}
-}
-
-var kubectlListCall = "get -o yaml " + resTypesStr + " -n " + testNamespace
-var kubectlListCallNsEmpty = "get -o yaml " + resTypesStr
-var kubectlListCallAllNamespaces = "get -o yaml " + resTypesStr + " --all-namespaces"
-
-func TestPackageManagerList(t *testing.T) {
-	for _, kubecfgFile := range []string{"", "kubeconfig.yaml"} {
-		expectedCalls := []string{
-			kubectlResTypeCall,
-			kubectlListCall,
-		}
-		kubecfgPrfx := ""
-		if kubecfgFile != "" {
-			kubecfgPrfx = "--kubeconfig " + kubecfgFile + " "
-			for i, call := range expectedCalls {
-				expectedCalls[i] = kubecfgPrfx + call
-			}
-		}
-		// with kubectl success
-		assertns := func(allNamespaces bool, ns string) func(string) {
-			return func(_ string) {
-				testee := NewPackageManager(kubecfgFile)
-				pkgs, err := testee.List(context.Background(), allNamespaces, ns)
-				require.NoError(t, err)
-				names := make([]string, len(pkgs))
-				namespaces := make([]string, len(pkgs))
-				for i, p := range pkgs {
-					names[i] = p.Name
-					namespaces[i] = strings.Join(p.Namespaces, ".")
-				}
-				require.Equal(t, []string{"pkg-othernamespace", "somepkg"}, names, "package list")
-				require.Equal(t, []string{"othernamespace", "cert-manager.mynamespace"}, namespaces, "package namespaces")
-			}
-		}
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(false, testNamespace))
-		expectedCalls[1] = kubecfgPrfx + kubectlListCallNsEmpty
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(false, ""))
-		expectedCalls[1] = kubecfgPrfx + kubectlListCallAllNamespaces
-		assertKubectlCalls(t, expectedCalls, len(expectedCalls), assertns(true, ""))
-		// with kubectl error
-		assertKubectlCalls(t, expectedCalls[:1], 0, func(_ string) {
-			testee := NewPackageManager(kubecfgFile)
-			_, err := testee.State(context.Background(), "", "somepkg")
-			assert.Error(t, err)
+			return
 		})
 	}
 }

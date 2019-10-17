@@ -16,6 +16,8 @@ limitations under the License.
 package cmd
 
 import (
+	"github.com/mgoltzsche/k8spkg/pkg/client"
+	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	//homedir "github.com/mitchellh/go-homedir"
@@ -25,6 +27,9 @@ import (
 var (
 	debug          bool
 	kubeconfigFile string
+	clientFactory  = func(kubeconfigFile string) client.K8sClient {
+		return client.NewK8sClient(kubeconfigFile) // replaced during test
+	}
 	//cfgFile string
 )
 
@@ -36,6 +41,14 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: applyLogLevel,
 	SilenceUsage:     true,
 	SilenceErrors:    true,
+}
+
+func pkgManager() *k8spkg.PackageManager {
+	return k8spkg.NewPackageManager(k8sClient(), namespace)
+}
+
+func k8sClient() client.K8sClient {
+	return clientFactory(kubeconfigFile)
 }
 
 func applyLogLevel(cmd *cobra.Command, args []string) {

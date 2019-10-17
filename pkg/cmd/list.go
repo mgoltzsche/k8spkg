@@ -18,9 +18,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
-	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -35,30 +33,27 @@ var (
 				return errors.New("no arguments supported")
 			}
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
-			pkgs, err := apiManager.List(ctx, allNamespaces, namespace)
+			apps, err := pkgManager().List(ctx, namespace)
 			if err != nil {
 				return
 			}
 			nameLen := 7
-			for _, pkg := range pkgs {
-				if len(pkg.Name) > nameLen {
-					nameLen = len(pkg.Name)
+			for _, app := range apps {
+				if len(app.Name) > nameLen {
+					nameLen = len(app.Name)
 				}
 			}
 			lineFmt := "%-" + strconv.Itoa(nameLen) + "s    %s\n"
-			fmt.Printf(lineFmt, "PACKAGE", "NAMESPACES")
-			for _, pkg := range pkgs {
-				fmt.Printf(lineFmt, pkg.Name, strings.Join(pkg.Namespaces, ","))
+			fmt.Printf(lineFmt, "APP", "NAMESPACE") // TODO: add kinds, ...?
+			for _, app := range apps {
+				fmt.Printf(lineFmt, app.Name, app.Namespace)
 			}
 			return
 		},
 	}
-	allNamespaces bool
 )
 
 func init() {
 	addRequestFlags(listCmd.Flags())
-	listCmd.Flags().BoolVar(&allNamespaces, "all-namespaces", false, "Query all namespaces for packages")
 	rootCmd.AddCommand(listCmd)
 }

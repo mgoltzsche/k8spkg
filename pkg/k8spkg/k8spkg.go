@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	resource "github.com/mgoltzsche/k8spkg/pkg/resource"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/mgoltzsche/k8spkg/pkg/transform"
 	"github.com/pkg/errors"
 )
@@ -19,14 +19,14 @@ type K8sPackage struct {
 }
 
 // TransformedObjects read API objects from reader and modify their name and namespace if provided
-func TransformedObjects(reader io.Reader, namespace, name string) (obj []*resource.K8sResource, err error) {
+func TransformedObjects(reader io.Reader, namespace, name string) (obj resource.K8sResourceList, err error) {
 	var namespaces []string
 	if namespace == "" {
-		if obj, err = resource.FromReader(reader); err != nil {
+		if obj, err = resource.FromYaml(reader); err != nil {
 			return
 		}
 		namespaces = containedNamespaces(obj)
-		readCloser := manifestReader(obj)
+		readCloser := obj.YamlReader()
 		reader = readCloser
 		defer readCloser.Close()
 	} else {
@@ -34,7 +34,7 @@ func TransformedObjects(reader io.Reader, namespace, name string) (obj []*resour
 	}
 	transformed := manifest2pkgobjects(reader, namespace, name, namespaces)
 	defer transformed.Close()
-	obj, err = resource.FromReader(transformed)
+	obj, err = resource.FromYaml(transformed)
 	if err != nil {
 		return nil, errors.Wrap(err, "manifest2pkg")
 	}
@@ -92,15 +92,16 @@ func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []
 	return pReader
 }
 
-func containedNamespaces(obj []*resource.K8sResource) (ns []string) {
+func containedNamespaces(obj []*resource.K8sResource) (n []string) {
 	nsMap := map[string]bool{}
 	for _, o := range obj {
-		if o.Namespace != "" && !nsMap[o.Namespace] {
-			nsMap[o.Namespace] = true
-			ns = append(ns, o.Namespace)
+		ns := o.Namespace()
+		if ns != "" && !nsMap[ns] {
+			nsMap[ns] = true
+			n = append(n, ns)
 		}
 	}
-	sort.Strings(ns)
+	sort.Strings(n)
 	return
 }
 

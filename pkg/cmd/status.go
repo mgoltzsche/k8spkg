@@ -20,25 +20,22 @@ import (
 )
 
 var (
-	applyCmd = &cobra.Command{
-		Use:   "apply",
-		Short: "Installs or updates a package",
-		Long: `Installs or updates the provided source as package
-and waits for the rollout to complete`,
+	statusCmd = &cobra.Command{
+		Use:   "status",
+		Short: "Waits for a packge's components to become ready",
+		Long:  `Waits for a packge's components to become ready`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := newContext()
 			pkg, err := sourcePackage(ctx)
 			if err != nil {
 				return
 			}
-			return pkgManager().Apply(ctx, pkg, prune)
+			return pkgManager().Status(ctx, pkg)
 		},
 	}
-	prune bool
 )
 
 func init() {
-	addSourceNameFlags(applyCmd.Flags())
-	applyCmd.Flags().BoolVar(&prune, "prune", false, "Deletes all sources that belong to the provided package but were not present within the input")
-	rootCmd.AddCommand(applyCmd)
+	addSourceNameFlags(statusCmd.Flags())
+	rootCmd.AddCommand(statusCmd)
 }

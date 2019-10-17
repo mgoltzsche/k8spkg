@@ -1,71 +1,31 @@
-package k8spkg
+package client
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"io"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 )
-
-// APIResourceType represents a Kubernetes API resource type's metadata
-type APIResourceType struct {
-	Name       string
-	ShortNames []string
-	APIGroup   string
-	Kind       string
-	Namespaced bool
-}
-
-// Returns the type's short name if any or its name
-func (t *APIResourceType) ShortName() (name string) {
-	name = t.Name
-	if len(t.ShortNames) > 0 {
-		name = t.ShortNames[0]
-	}
-	return
-}
-
-// Returns the type's short name with APIGroup suffix if there is one
-func (t *APIResourceType) FullName() (name string) {
-	if t.APIGroup == "" {
-		return t.ShortName()
-	}
-	return t.ShortName() + "." + t.APIGroup
-}
 
 var headerRegex = regexp.MustCompile(`[^\s]+($|\s+)`)
 
-func LoadAPIResourceTypes(ctx context.Context, kubeconfigFile string) (types []*APIResourceType, err error) {
-	var stdout, stderr bytes.Buffer
-	args := []string{"api-resources", "--verbs", "delete"}
-	if kubeconfigFile != "" {
-		args = append([]string{"--kubeconfig", kubeconfigFile}, args...)
-	}
-	c := exec.CommandContext(ctx, "kubectl", args...)
-	c.Stdout = &stdout
-	c.Stderr = &stderr
-	logrus.Debugf("Running %+v", c.Args)
-	e := c.Run()
-	types, err = parseApiResourceTable(bytes.NewReader(stdout.Bytes()))
-	if e != nil {
-		e = errors.Errorf("%+v: %s. %s", c.Args, e, strings.TrimSuffix(stderr.String(), "\n"))
-		if len(types) > 0 {
-			logrus.Warn(e.Error())
-		} else {
-			err = e
-		}
-	}
+func (c *k8sClient) ResourceTypes(ctx context.Context) (types []*APIResourceType, err error) {
+	reader, writer := io.Pipe()
+	go func() {
+		args := []string{"api-resources", "--verbs", "delete"}
+		e := kubectl(ctx, nil, writer, c.kubeconfigFile, args)
+		writer.CloseWithError(e)
+	}()
+	types, err = parseResourceTypeTable(reader)
+	reader.Close()
 	return
 }
 
-func parseApiResourceTable(reader io.Reader) (types []*APIResourceType, err error) {
+func parseResourceTypeTable(reader io.Reader) (types []*APIResourceType, err error) {
 	lineReader := bufio.NewReader(reader)
 	colNames, readers, err := readTableHeader(lineReader)
 	if err != nil {
@@ -93,7 +53,7 @@ func parseApiResourceTable(reader io.Reader) (types []*APIResourceType, err erro
 		}
 	}
 	if colsFound != 31 {
-		return nil, errors.New("api-resources parser: missing NAME, SHORTNAMES, APIGROUP, KIND or NAMESPACED header column")
+		return nil, errors.New("parse api-resources: missing NAME, SHORTNAMES, APIGROUP, KIND or NAMESPACED header column")
 	}
 	var rtype *APIResourceType
 	var line string
@@ -111,17 +71,17 @@ func parseApiResourceTable(reader io.Reader) (types []*APIResourceType, err erro
 			Kind:     kind(line),
 		}
 		if rtype.Name == "" {
-			return nil, errors.Errorf("api-resources parser: empty NAME column")
+			return nil, errors.Errorf("parse api-resources: empty NAME column")
 		}
 		if rtype.Kind == "" {
-			return nil, errors.Errorf("api-resources parser: empty KIND column")
+			return nil, errors.Errorf("parse api-resources: empty KIND column")
 		}
 		shortNameCsv := shortName(line)
 		if shortNameCsv != "" {
 			rtype.ShortNames = strings.Split(shortNameCsv, ",")
 		}
 		if rtype.Namespaced, err = strconv.ParseBool(namespaced(line)); err != nil {
-			return nil, errors.Errorf("api-resources parser: namespaced column: %s", err)
+			return nil, errors.Errorf("parse api-resources: namespaced column: %s", err)
 		}
 		types = append(types, rtype)
 	}

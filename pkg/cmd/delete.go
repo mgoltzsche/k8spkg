@@ -31,13 +31,18 @@ var (
 				return errors.New("too many arguments provided")
 			}
 			ctx := newContext()
-			apiManager := k8spkg.NewPackageManager(kubeconfigFile)
-			if len(args) == 1 {
+			apiManager := pkgManager()
+			if len(args) > 0 {
 				// Find and delete objects by package name
 				if sourceKustomize != "" || sourceFile != "" {
 					return errors.New("package name argument and -f or -k option are mutually exclusive but both provided")
 				}
-				return apiManager.Delete(ctx, namespace, args[0])
+				for _, pkgName := range args {
+					if err = apiManager.Delete(ctx, pkgName); err != nil {
+						return
+					}
+				}
+				return
 			}
 			// Delete provided objects
 			reader, err := sourceReader(ctx)
@@ -50,7 +55,7 @@ var (
 				return
 			}
 			// TODO: recover from wait error due to already removed object
-			return apiManager.DeleteResources(ctx, obj)
+			return apiManager.DeleteResources(ctx, obj.Refs())
 		},
 	}
 )

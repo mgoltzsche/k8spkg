@@ -29,7 +29,7 @@ func TestMain(t *testing.T) {
 	require.NoError(t, err)
 	out := string(b)
 	found := true
-	for _, cmd := range []string{"apply", "manifest", "delete", "list", "version", "help"} {
+	for _, cmd := range []string{"apply", "build", "delete", "list", "version", "help"} {
 		if !assert.Contains(t, out, "\n  "+cmd+" ") {
 			found = false
 		}

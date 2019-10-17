@@ -11,7 +11,7 @@ LDFLAGS=-X "github.com/mgoltzsche/k8spkg/pkg/cmd.version=${COMMIT_TAG}" \
 BUILDTAGS?=
 
 GOIMAGE=k8spkg-go
-LITEIDEIMAGE=mgoltzsche/liteide:x36
+LITEIDEIMAGE=mgoltzsche/liteide:x36.1
 DOCKERRUN=docker run --name k8spkg-build --rm \
 		-v "$(shell pwd):/go/src/$(PKG)" \
 		-w "/go/src/$(PKG)" \
@@ -22,6 +22,7 @@ define GODOCKERFILE
 FROM golang:1.12-alpine3.10
 RUN apk add --update --no-cache make git
 RUN go get golang.org/x/lint/golint
+RUN go get -u github.com/go-bindata/go-bindata/...
 endef
 export GODOCKERFILE
 
@@ -31,17 +32,20 @@ build: golang-image
 	$(DOCKERRUN) $(GOIMAGE) \
 		make k8spkg BUILDTAGS=$(BUILDTAGS)
 
-k8spkg:
+k8spkg: resources
 	go build -a -ldflags '-s -w -extldflags "-static" $(LDFLAGS)' -tags '$(BUILDTAGS)' .
 
 install:
 	cp k8spkg /usr/local/bin/
 
-test:
+test: resources
 	go test -coverprofile coverage.out -cover ./...
 
 coverage: test
 	go tool cover -html=coverage.out -o coverage.html
+
+resources:
+	go-bindata crd/
 
 clean:
 	rm -f k8spkg coverage.out coverage.html

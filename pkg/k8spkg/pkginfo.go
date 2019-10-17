@@ -39,7 +39,8 @@ func PackageInfosFromResources(obj resource.K8sResourceList) (pkgs []*PackageInf
 			pkg = &pkgInfo{packageName, map[string]bool{}, false}
 			pkgMap[packageName] = pkg
 		}
-		if o.Namespace == "" && namespacesStr == "" {
+		namespace := o.Namespace()
+		if namespace == "" && namespacesStr == "" {
 			pkg.namespaceLabelNotSet = true
 		}
 		if namespacesStr != "" {
@@ -49,8 +50,8 @@ func PackageInfosFromResources(obj resource.K8sResourceList) (pkgs []*PackageInf
 				}
 			}
 		}
-		if o.Namespace != "" {
-			pkg.namespaces[o.Namespace] = true
+		if namespace != "" {
+			pkg.namespaces[namespace] = true
 		}
 	}
 	pkgNames := make([]string, 0, len(pkgMap))

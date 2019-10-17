@@ -73,26 +73,6 @@ func newContext() context.Context {
 	return ctx
 }
 
-func lookupPackage(ctx context.Context, args []string, pkgManager *k8spkg.PackageManager) (pkg *k8spkg.K8sPackage, err error) {
-	if len(args) > 1 {
-		return nil, errors.New("too many arguments provided")
-	}
-	if len(args) == 1 {
-		// Load manifest from deployed package state
-		if args[0] == "" {
-			return nil, errors.New("empty package name argument provided")
-		}
-		if sourceKustomize != "" || sourceFile != "" {
-			return nil, errors.New("package name argument and -f or -k option are mutually exclusive but both provided")
-		}
-		pkg, err = pkgManager.State(ctx, namespace, args[0])
-	} else {
-		// Load manifest from provided source
-		pkg, err = sourcePackage(ctx)
-	}
-	return
-}
-
 func sourcePackage(ctx context.Context) (pkg *k8spkg.K8sPackage, err error) {
 	reader, err := sourceReader(ctx)
 	if err != nil {
@@ -108,14 +88,14 @@ func sourceReader(ctx context.Context) (io.ReadCloser, error) {
 		return nil, errors.New("options -f and -k are mutually exclusive but both provided")
 	}
 	if sourceKustomize != "" {
-		return renderKustomize(sourceKustomize)
+		return renderKustomize(sourceKustomize), nil
 	} else if sourceFile != "" {
 		return fileReader(ctx, sourceFile)
 	}
 	return nil, errors.New("no source: none of option -f or -k provided")
 }
 
-func renderKustomize(source string) (reader io.ReadCloser, err error) {
+func renderKustomize(source string) (reader io.ReadCloser) {
 	reader, writer := io.Pipe()
 	go func() {
 		err := kustomize.Render(kustomize.RenderOptions{
@@ -125,7 +105,7 @@ func renderKustomize(source string) (reader io.ReadCloser, err error) {
 		})
 		writer.CloseWithError(err)
 	}()
-	return reader, nil
+	return reader
 }
 
 func fileReader(ctx context.Context, source string) (reader io.ReadCloser, err error) {

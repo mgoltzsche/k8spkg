@@ -8,13 +8,8 @@ import (
 
 type K8sResourceList []*K8sResource
 
-type K8sResourceGroup struct {
-	Key       string
-	Resources K8sResourceList
-}
-
-func FromReader(f io.Reader) (l K8sResourceList, err error) {
-	dec := yaml.NewDecoder(f)
+func FromYaml(reader io.Reader) (l K8sResourceList, err error) {
+	dec := yaml.NewDecoder(reader)
 	obj := []*K8sResource{}
 	o := map[string]interface{}{}
 	for ; err == nil; err = dec.Decode(o) {
@@ -31,6 +26,14 @@ func FromReader(f io.Reader) (l K8sResourceList, err error) {
 	return obj, err
 }
 
+func (l K8sResourceList) Refs() K8sResourceRefList {
+	r := make([]K8sResourceRef, len(l))
+	for i, o := range l {
+		r[i] = o
+	}
+	return r
+}
+
 func (l K8sResourceList) WriteYaml(writer io.Writer) (err error) {
 	for _, o := range l {
 		if err = o.WriteYaml(writer); err != nil {
@@ -40,34 +43,27 @@ func (l K8sResourceList) WriteYaml(writer io.Writer) (err error) {
 	return
 }
 
-func (l K8sResourceList) Filter(filter func(*K8sResource) bool) (filtered K8sResourceList) {
-	for _, o := range l {
-		if filter(o) {
-			filtered = append(filtered, o)
-		}
+func (l K8sResourceList) YamlReader() io.ReadCloser {
+	reader, writer := io.Pipe()
+	go func() {
+		writer.CloseWithError(l.WriteYaml(writer))
+	}()
+	return reader
+}
+
+func appendFlattened(o rawK8sResource, flattened *[]*K8sResource) (err error) {
+	if o["kind"] != "List" {
+		entry := FromMap(o)
+		err = entry.Validate()
+		*flattened = append(*flattened, entry)
+		return
 	}
-	return
-}
-
-func (l K8sResourceList) GroupByNamespace() (groups []*K8sResourceGroup) {
-	return l.groupBy(func(o *K8sResource) string { return o.Namespace })
-}
-
-func (l K8sResourceList) GroupByKind() (groups []*K8sResourceGroup) {
-	return l.groupBy(func(o *K8sResource) string { return o.Kind })
-}
-
-func (l K8sResourceList) groupBy(keyFn func(*K8sResource) string) (groups []*K8sResourceGroup) {
-	grouped := map[string]*K8sResourceGroup{}
-	for _, o := range l {
-		key := keyFn(o)
-		g := grouped[key]
-		if g == nil {
-			g = &K8sResourceGroup{key, []*K8sResource{o}}
-			groups = append(groups, g)
-			grouped[key] = g
-		} else {
-			g.Resources = append(g.Resources, o)
+	ol, err := items(o)
+	if err == nil {
+		for _, o := range ol {
+			if err = appendFlattened(o, flattened); err != nil {
+				return
+			}
 		}
 	}
 	return
