@@ -17,7 +17,7 @@ func TestResourceTracker(t *testing.T) {
 		require.NoError(t, evt.Error)
 		obj = append(obj, evt.Resource)
 	}
-	testee := NewResourceTracker(obj.Refs(), RolloutConditions)
+	testee := NewResourceTracker(obj, RolloutConditions)
 	hasReady := false
 	hasNotReady := false
 	hasChanged := false

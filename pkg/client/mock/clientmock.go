@@ -5,11 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/mgoltzsche/k8spkg/pkg/client"
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
+	"gopkg.in/yaml.v2"
 )
 
 func MockDataFile(file string) (mockOut []byte) {
@@ -86,10 +88,37 @@ func (c *ClientMock) GetResource(ctx context.Context, kind, namespace, name stri
 }
 func (c *ClientMock) Watch(ctx context.Context, kind, namespace string, labels []string) <-chan resource.ResourceEvent {
 	requireContext(ctx)
+	sort.Strings(labels)
 	c.call("watch %s/%s %+v", namespace, kind, labels)
+	watchEvents := c.MockWatchEvents
+	if len(watchEvents) == 0 {
+		for _, res := range c.Applied {
+			// TODO: set positive status
+			var buf bytes.Buffer
+			if err := res.WriteYaml(&buf); err != nil {
+				panic(err)
+			}
+			m := map[string]interface{}{}
+			if err := yaml.Unmarshal(buf.Bytes(), &m); err != nil {
+				panic(err)
+			}
+			m["status"] = map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "Available", "status": "True"},
+					map[string]interface{}{"type": "Ready", "status": "True"},
+				},
+				"replicas":               2,
+				"readyReplicas":          2,
+				"desiredNumberScheduled": 3,
+				"numberReady":            3,
+			}
+			res = resource.FromMap(m)
+			watchEvents = append(watchEvents, resource.ResourceEvent{res, nil})
+		}
+	}
 	ch := make(chan resource.ResourceEvent)
 	go func() {
-		for _, evt := range c.MockWatchEvents {
+		for _, evt := range watchEvents {
 			ch <- evt
 		}
 		close(ch)

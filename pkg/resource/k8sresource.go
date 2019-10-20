@@ -116,8 +116,14 @@ func (o *K8sResource) Validate() (err error) {
 	return
 }
 
-func (o *K8sResource) Conditions() []*K8sResourceCondition {
-	return o.conditions
+// MatchLabels returns the labels on which pods are matched (in case of Deployment or DaemonSet)
+func (o *K8sResource) SelectorMatchLabels() []string {
+	m := asMap(lookup(o.raw, "spec.selector.matchLabels"))
+	labels := make([]string, 0, len(m))
+	for k, v := range m {
+		labels = append(labels, fmt.Sprintf("%s=%s", k, v))
+	}
+	return labels
 }
 
 // Returns 'items' slice

@@ -50,8 +50,7 @@ func TestPackageManagerApply(t *testing.T) {
 			}
 		}
 		expectedCalls = append(expectedCalls,
-			// default/Pod was already contained within manifest
-			fmt.Sprintf("watch otherns/Pod %s", labels),
+			"watch otherns/Pod [app=otherdeployment otherlabel=otherval]",
 		)
 		obj[len(obj)-1].Conditions()[0].Status = false
 		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
@@ -68,9 +67,10 @@ func TestPackageManagerApply(t *testing.T) {
 			}
 			evts[len(evts)-1].Resource.Conditions()[0].Status = true
 			c.Calls = c.Calls[:0]
+			c.Applied = nil
 			if err = testee.Apply(context.Background(), pkg, false); err == nil {
 				require.Equal(t, obj, c.Applied, "applied")
-				require.Equal(t, expectedCalls[:len(expectedCalls)-1], c.Calls, "client calls")
+				require.Equal(t, expectedCalls[:len(expectedCalls)-1], c.Calls[:len(expectedCalls)-1], "client calls")
 			}
 			return
 		})

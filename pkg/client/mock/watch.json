@@ -752,7 +752,8 @@
         "revisionHistoryLimit": 10,
         "selector": {
             "matchLabels": {
-                "app": "otherdeployment"
+                "app": "otherdeployment",
+                "otherlabel": "otherval"
             }
         },
         "strategy": {

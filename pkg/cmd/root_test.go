@@ -29,9 +29,6 @@ func assertKubectlVerbsUsed(t *testing.T, args, expectedVerbs []string, callMap 
 	for _, call := range actualCalls {
 		cmdSegs := strings.Split(call, " ")
 		verb := cmdSegs[0]
-		/*if verb == "--kubeconfig" {
-			verb = cmdSegs[3]
-		}*/
 		used, isExpected := cmdMap[verb]
 		require.True(t, isExpected, "unexpected kubectl cmd %q used by %+v:\n  %s", verb, args, call)
 		cmdMap[verb] = true
