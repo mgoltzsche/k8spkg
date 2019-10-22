@@ -8,6 +8,7 @@ import (
 
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type rawK8sResource map[string]interface{}
@@ -74,22 +75,24 @@ type K8sResourceCondition struct {
 }
 
 func FromMap(o map[string]interface{}) *K8sResource {
-	meta := asMap(o["metadata"])
-	rawConditions := asList(lookup(o, "status.conditions"))
+	obj := unstructured.Unstructured{o}
+	rawConditions, _, _ := unstructured.NestedSlice(o, "status", "conditions")
 	conditions := make([]*K8sResourceCondition, 0, len(rawConditions))
 	for _, entry := range rawConditions {
 		rawCondition := asMap(entry)
-		ct := asString(rawCondition["type"])
-		if ct != "" {
+		if ct, _, _ := unstructured.NestedString(rawCondition, "type"); ct != "" {
+			status, _, _ := unstructured.NestedString(rawCondition, "status")
+			reason, _, _ := unstructured.NestedString(rawCondition, "reason")
+			message, _, _ := unstructured.NestedString(rawCondition, "message")
 			conditions = append(conditions, &K8sResourceCondition{
 				strings.ToLower(ct),
-				strings.ToLower(asString(rawCondition["status"])) == "true",
-				asString(rawCondition["reason"]),
-				asString(rawCondition["message"]),
+				strings.ToLower(status) == "true",
+				reason,
+				message,
 			})
 		}
 	}
-	apiVersion := asString(o["apiVersion"])
+	apiVersion := obj.GetAPIVersion()
 	apiGroup := ""
 	if gv := strings.SplitN(apiVersion, "/", 2); len(gv) == 2 {
 		apiGroup = gv[0]
@@ -100,11 +103,11 @@ func FromMap(o map[string]interface{}) *K8sResource {
 		K8sResourceRef: &k8sResourceRef{
 			apiVersion: apiVersion,
 			apiGroup:   apiGroup,
-			kind:       asString(o["kind"]),
-			name:       asString(meta["name"]),
-			namespace:  asString(meta["namespace"]),
+			kind:       obj.GetKind(),
+			name:       obj.GetName(),
+			namespace:  obj.GetNamespace(),
 		},
-		uid:        asString(meta["uid"]),
+		uid:        string(obj.GetUID()),
 		conditions: conditions,
 	}
 }
@@ -126,17 +129,8 @@ func (o *K8sResource) SelectorMatchLabels() []string {
 	return labels
 }
 
-// Returns 'items' slice
-func items(o rawK8sResource) (items []rawK8sResource, err error) {
-	rawItems := asList(o["items"])
-	if rawItems == nil {
-		return nil, errors.New("object of kind List does not declare items")
-	}
-	items = make([]rawK8sResource, len(rawItems))
-	for i, item := range rawItems {
-		items[i] = rawK8sResource(asMap(item))
-	}
-	return
+func (o *K8sResource) Raw() (r map[string]interface{}) {
+	return o.raw
 }
 
 func (o *K8sResource) Spec() (l map[string]interface{}) {

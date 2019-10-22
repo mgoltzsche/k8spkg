@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	CrdAPIGroup   = "mgoltzsche.github.com"
+	CrdAPIGroup   = "k8spkg.mgoltzsche.github.com"
 	CrdAPIVersion = "v1alpha1"
 	CrdKind       = "Application"
 )

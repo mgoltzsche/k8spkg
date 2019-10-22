@@ -65,7 +65,7 @@ func TestBuild(t *testing.T) {
 	} {
 		out, _, err := testRun(t, c.args)
 		require.NoError(t, err)
-		obj, err := resource.FromYaml(bytes.NewReader(out))
+		obj, err := resource.FromReader(bytes.NewReader(out))
 		require.NoError(t, err, "FromReader(%s)", c.expectedPkgName)
 		require.Equal(t, c.expectedCount, len(obj), "%s object count\nobjects:\n%s", c.expectedPkgName, strings.Join(obj.Refs().Names(), "\n"))
 		pkgName := ""

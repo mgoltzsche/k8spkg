@@ -26,6 +26,7 @@ type K8sClient interface {
 	Watch(ctx context.Context, kind, namespace string, labels []string) <-chan resource.ResourceEvent
 	AwaitDeletion(ctx context.Context, namespace string, resources resource.K8sResourceRefList) (err error)
 	ResourceTypes(ctx context.Context) (types []*APIResourceType, err error)
+	ContainerLogs(ctx context.Context, namespace, podName, containerName string, writer io.Writer) (err error)
 }
 
 type notFoundError struct {
@@ -171,6 +172,14 @@ func (c *k8sClient) Watch(ctx context.Context, kind, namespace string, labels []
 	return c.kubectlGet(ctx, namespace, args)
 }
 
+func (c *k8sClient) ContainerLogs(ctx context.Context, namespace, podName, containerName string, writer io.Writer) (err error) {
+	args := []string{"logs", podName, "-c", containerName}
+	if namespace != "" {
+		args = append(args, "-n", namespace)
+	}
+	return kubectl(ctx, nil, writer, c.kubeconfigFile, args)
+}
+
 func (c *k8sClient) kubectlGet(ctx context.Context, namespace string, args []string) <-chan resource.ResourceEvent {
 	reader, writer := io.Pipe()
 	done := make(chan error)
@@ -208,7 +217,7 @@ func (c *k8sClient) kubectlObjOut(ctx context.Context, args []string, stdin io.R
 		e := kubectl(ctx, stdin, writer, c.kubeconfigFile, args)
 		writer.CloseWithError(e)
 	}()
-	r, err = resource.FromYaml(reader)
+	r, err = resource.FromReader(reader)
 	reader.Close()
 	return
 }

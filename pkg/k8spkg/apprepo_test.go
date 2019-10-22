@@ -91,7 +91,7 @@ func TestAppRepoGetAll(t *testing.T) {
 		},
 	}
 	expectedCalls := []string{
-		fmt.Sprintf("get myns/ application.mgoltzsche.github.com []"),
+		fmt.Sprintf("get myns/ %s.%s []", strings.ToLower(CrdKind), CrdAPIGroup),
 	}
 	expectedApps := []*App{
 		testApp,

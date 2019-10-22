@@ -22,7 +22,7 @@ type K8sPackage struct {
 func TransformedObjects(reader io.Reader, namespace, name string) (obj resource.K8sResourceList, err error) {
 	var namespaces []string
 	if namespace == "" {
-		if obj, err = resource.FromYaml(reader); err != nil {
+		if obj, err = resource.FromReader(reader); err != nil {
 			return
 		}
 		namespaces = containedNamespaces(obj)
@@ -34,7 +34,7 @@ func TransformedObjects(reader io.Reader, namespace, name string) (obj resource.
 	}
 	transformed := manifest2pkgobjects(reader, namespace, name, namespaces)
 	defer transformed.Close()
-	obj, err = resource.FromYaml(transformed)
+	obj, err = resource.FromReader(transformed)
 	if err != nil {
 		return nil, errors.Wrap(err, "manifest2pkg")
 	}

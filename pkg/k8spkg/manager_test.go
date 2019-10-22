@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/mgoltzsche/k8spkg/pkg/client/mock"
@@ -83,7 +84,7 @@ func TestPackageManagerList(t *testing.T) {
 	appRes := testAppResource(t, testApp, &testApp2)
 	for _, ns := range []string{"", "myns"} {
 		expectedCalls := []string{
-			fmt.Sprintf("get %s/ application.mgoltzsche.github.com []", ns),
+			fmt.Sprintf("get %s/ %s.%s []", ns, strings.ToLower(CrdKind), CrdAPIGroup),
 		}
 		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
 			c.MockResources = appRes
@@ -100,10 +101,10 @@ func TestPackageManagerList(t *testing.T) {
 func TestPackageManagerDelete(t *testing.T) {
 	for _, ns := range []string{"", "myns"} {
 		expectedCalls := []string{
-			fmt.Sprintf("getresource %s/ application.mgoltzsche.github.com %s", ns, testApp.Name),
+			fmt.Sprintf("getresource %s/ %s.%s %s", ns, strings.ToLower(CrdKind), CrdAPIGroup, testApp.Name),
 			fmt.Sprintf("delete %s/ [deployment.apps/mydeployment apiservice.apiservice/myapi]", ns),
 			fmt.Sprintf("awaitdeletion %s/ [deployment.apps/mydeployment apiservice.apiservice/myapi]", ns),
-			fmt.Sprintf("delete %s/ [application.mgoltzsche.github.com/%s]", testApp.Namespace, testApp.Name),
+			fmt.Sprintf("delete %s/ [%s.%s/%s]", testApp.Namespace, strings.ToLower(CrdKind), CrdAPIGroup, testApp.Name),
 		}
 		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
 			testee = NewPackageManager(c, ns)

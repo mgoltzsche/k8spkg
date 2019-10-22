@@ -14,7 +14,7 @@ func TestResourceFromReader(t *testing.T) {
 	f, err := os.Open("test/k8sobjectlist.yaml")
 	require.NoError(t, err)
 	defer f.Close()
-	ol, err := FromYaml(f)
+	ol, err := FromReader(f)
 	require.NoError(t, err)
 	names := []string{}
 	for _, o := range ol {

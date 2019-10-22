@@ -3,8 +3,10 @@ package k8spkg
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mgoltzsche/k8spkg/pkg/client"
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
@@ -56,7 +58,12 @@ func (m *PackageManager) await(ctx context.Context, appName string, resources re
 	reg := status.NewResourceTracker(resources, conditions)
 	ready := false
 	found := false
-	ch := m.watch(ctx, appName, resources.Refs())
+	deadline, hasDeadline := ctx.Deadline()
+	watchCtx := ctx
+	if hasDeadline {
+		watchCtx, _ = context.WithDeadline(ctx, deadline.Add(-7*time.Second))
+	}
+	ch := m.watch(watchCtx, appName, resources.Refs())
 findLoop:
 	for {
 		for evt := range ch {
@@ -74,7 +81,7 @@ findLoop:
 					if reg.Found() && !found {
 						found = true
 						if !ready {
-							if podCh := m.watchPods(ctx, reg); len(podCh) > 0 {
+							if podCh := m.watchPods(watchCtx, reg); len(podCh) > 0 {
 								ch = resource.WatchEventUnion(append(podCh, ch))
 								continue findLoop
 							}
@@ -103,8 +110,17 @@ findLoop:
 		if err == nil {
 			err = errors.Errorf("%d resources did not meet condition", failedObj)
 		}
-		if failedPods != nil {
+		if len(failedPods) > 0 {
 			// TODO: group common pods and print logs of a pod per group
+			pod := failedPods[0]
+			for _, cs := range pod.ContainerStatuses() {
+				if cs.ExitCode > 0 {
+					if e := m.client.ContainerLogs(ctx, pod.Namespace(), pod.Name(), cs.Name, os.Stderr); err != nil {
+						logrus.Warn(e)
+					}
+					break
+				}
+			}
 		}
 	}
 	return

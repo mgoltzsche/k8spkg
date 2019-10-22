@@ -11,6 +11,7 @@ require (
 	github.com/spf13/pflag v1.0.3
 	github.com/stretchr/testify v1.3.0
 	gopkg.in/yaml.v2 v2.2.2
+	k8s.io/apimachinery v0.0.0-20190313205120-d7deff9243b1
 	k8s.io/utils v0.0.0-20190923111123-69764acb6e8e // indirect
 	sigs.k8s.io/kustomize/v3 v3.2.0
 )

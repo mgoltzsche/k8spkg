@@ -3,16 +3,18 @@ package resource
 import (
 	"io"
 
-	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
 type K8sResourceList []*K8sResource
 
-func FromYaml(reader io.Reader) (l K8sResourceList, err error) {
-	dec := yaml.NewDecoder(reader)
+func FromReader(reader io.Reader) (l K8sResourceList, err error) {
 	obj := []*K8sResource{}
 	o := map[string]interface{}{}
-	for ; err == nil; err = dec.Decode(o) {
+	dec := yaml.NewYAMLOrJSONDecoder(reader, 8192)
+	for ; err == nil; err = dec.Decode(&o) {
 		if len(o) > 0 {
 			if err = appendFlattened(o, &obj); err != nil {
 				return
@@ -52,19 +54,14 @@ func (l K8sResourceList) YamlReader() io.ReadCloser {
 }
 
 func appendFlattened(o rawK8sResource, flattened *[]*K8sResource) (err error) {
-	if o["kind"] != "List" {
-		entry := FromMap(o)
-		err = entry.Validate()
-		*flattened = append(*flattened, entry)
-		return
+	obj := unstructured.Unstructured{o}
+	if obj.IsList() {
+		return obj.EachListItem(func(o runtime.Object) error {
+			return appendFlattened(o.(*unstructured.Unstructured).Object, flattened)
+		})
 	}
-	ol, err := items(o)
-	if err == nil {
-		for _, o := range ol {
-			if err = appendFlattened(o, flattened); err != nil {
-				return
-			}
-		}
-	}
+	entry := FromMap(o)
+	err = entry.Validate()
+	*flattened = append(*flattened, entry)
 	return
 }

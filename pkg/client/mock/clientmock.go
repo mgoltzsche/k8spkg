@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"sort"
 	"strings"
@@ -11,7 +12,7 @@ import (
 
 	"github.com/mgoltzsche/k8spkg/pkg/client"
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
-	"gopkg.in/yaml.v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func MockDataFile(file string) (mockOut []byte) {
@@ -23,7 +24,7 @@ func MockDataFile(file string) (mockOut []byte) {
 }
 
 func MockResourceList(file string) (l resource.K8sResourceList) {
-	l, err := resource.FromYaml(bytes.NewReader(MockDataFile(file)))
+	l, err := resource.FromReader(bytes.NewReader(MockDataFile(file)))
 	if err != nil {
 		panic(err)
 	}
@@ -94,14 +95,7 @@ func (c *ClientMock) Watch(ctx context.Context, kind, namespace string, labels [
 	if len(watchEvents) == 0 {
 		for _, res := range c.Applied {
 			// TODO: set positive status
-			var buf bytes.Buffer
-			if err := res.WriteYaml(&buf); err != nil {
-				panic(err)
-			}
-			m := map[string]interface{}{}
-			if err := yaml.Unmarshal(buf.Bytes(), &m); err != nil {
-				panic(err)
-			}
+			m := (&unstructured.Unstructured{res.Raw()}).DeepCopy().Object
 			m["status"] = map[string]interface{}{
 				"conditions": []interface{}{
 					map[string]interface{}{"type": "Available", "status": "True"},
@@ -129,4 +123,11 @@ func (c *ClientMock) ResourceTypes(ctx context.Context) (types []*client.APIReso
 	requireContext(ctx)
 	c.call("resourcetypes")
 	return c.MockTypes, c.MockErr
+}
+
+func (c *ClientMock) ContainerLogs(ctx context.Context, namespace, podName, containerName string, writer io.Writer) (err error) {
+	requireContext(ctx)
+	c.call("logs")
+	fmt.Fprintf(writer, "mock log line 1\nmock log line 2\n")
+	return c.MockErr
 }

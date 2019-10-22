@@ -2,11 +2,11 @@ package resource
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
 )
 
 func TestK8sResource(t *testing.T) {
@@ -37,10 +37,10 @@ status:
     status: "False"
     type: SomeCondition
 `
-	obj := map[string]interface{}{}
-	err := yaml.Unmarshal([]byte(manifest), obj)
+	l, err := FromReader(bytes.NewReader([]byte(manifest)))
 	require.NoError(t, err)
-	o := FromMap(obj)
+	require.Equal(t, 1, len(l), "list size")
+	o := l[0]
 	assert.Equal(t, "certmanager.k8s.io", o.APIGroup(), "apiGroup")
 	assert.Equal(t, "v1alpha1", o.APIVersion(), "apiVersion")
 	assert.Equal(t, "Issuer", o.Kind(), "kind")
@@ -68,4 +68,20 @@ status:
 	err = o.WriteYaml(&buf)
 	require.NoError(t, err)
 	assert.Equal(t, "---\n"+manifest, buf.String(), "yamlIn->obj->yamlOut == yamlIn")
+}
+
+func TestFromJsonStream(t *testing.T) {
+	f, err := os.Open("../client/mock/watch.json")
+	require.NoError(t, err)
+	defer f.Close()
+	expectedNames := map[string]bool{"mydeployment": true, "otherdeployment": true, "somedeployment-pod-x": true}
+	actualNames := map[string]bool{}
+	count := 0
+	for evt := range FromJsonStream(f) {
+		require.NoError(t, evt.Error)
+		require.True(t, len(evt.Resource.Conditions()) > 0, "conditions > 0. item: %#v", evt.Resource)
+		actualNames[evt.Resource.Name()] = true
+		count++
+	}
+	require.Equal(t, expectedNames, actualNames, "names")
 }

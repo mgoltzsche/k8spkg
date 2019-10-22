@@ -23,7 +23,7 @@ var (
 func TestApply(t *testing.T) {
 	mockOut, err := ioutil.ReadFile("../resource/test/k8sobjectlist.yaml")
 	require.NoError(t, err)
-	obj, err := resource.FromYaml(bytes.NewReader(mockOut))
+	obj, err := resource.FromReader(bytes.NewReader(mockOut))
 	require.NoError(t, err)
 	labelCases := [][]string{nil, {"my/label1=val1", "my/label2=val2"}}
 	for _, labels := range labelCases {
@@ -50,7 +50,7 @@ func TestApply(t *testing.T) {
 func TestDelete(t *testing.T) {
 	mockOut, err := ioutil.ReadFile("../resource/test/k8sobjectlist.yaml")
 	require.NoError(t, err)
-	obj, err := resource.FromYaml(bytes.NewReader(mockOut))
+	obj, err := resource.FromReader(bytes.NewReader(mockOut))
 	require.NoError(t, err)
 	refs := append(obj.Refs(), resource.ResourceRef("", "v1", "Secret", "cert-manager", "mysecret"))
 	for _, ns := range []string{"", "myns"} {
