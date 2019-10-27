@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/mgoltzsche/k8spkg/pkg/transform"
@@ -14,25 +13,40 @@ import (
 
 // K8sPackage define a collection of objects and their package metadata
 type K8sPackage struct {
-	*PackageInfo
+	Name      string
 	Resources resource.K8sResourceList
 }
 
-// TransformedObjects read API objects from reader and modify their name and namespace if provided
-func TransformedObjects(reader io.Reader, namespace, name string) (obj resource.K8sResourceList, err error) {
-	var namespaces []string
-	if namespace == "" {
-		if obj, err = resource.FromReader(reader); err != nil {
-			return
-		}
-		namespaces = containedNamespaces(obj)
-		readCloser := obj.YamlReader()
-		reader = readCloser
-		defer readCloser.Close()
-	} else {
-		namespaces = []string{namespace}
+func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage, err error) {
+	obj, err := transformedObjects(reader, namespace, name)
+	if err != nil {
+		return
 	}
-	transformed := manifest2pkgobjects(reader, namespace, name, namespaces)
+	if name == "" {
+		for _, o := range obj {
+			labels := o.Labels()
+			oldName := name
+			name = labels[PKG_NAME_LABEL]
+			if name == "" {
+				return nil, errors.New("no package name provided")
+			}
+			if oldName != "" && oldName != name {
+				return nil, errors.Errorf("resources contain different values for package name label %s", PKG_NAME_LABEL)
+			}
+		}
+	}
+	return &K8sPackage{name, obj}, nil
+}
+
+// transformedObjects read API objects from reader and modify their name and namespace if provided
+func transformedObjects(reader io.Reader, namespace, name string) (obj resource.K8sResourceList, err error) {
+	if obj, err = resource.FromReader(reader); err != nil {
+		return
+	}
+	readCloser := obj.YamlReader()
+	reader = readCloser
+	defer readCloser.Close()
+	transformed := manifest2pkgobjects(reader, name, namespace)
 	defer transformed.Close()
 	obj, err = resource.FromReader(transformed)
 	if err != nil {
@@ -44,23 +58,8 @@ func TransformedObjects(reader io.Reader, namespace, name string) (obj resource.
 	return
 }
 
-func PkgFromManifest(reader io.Reader, namespace, name string) (pkg *K8sPackage, err error) {
-	obj, err := TransformedObjects(reader, namespace, name)
-	if err != nil {
-		return
-	}
-	pkgs, err := PackageInfosFromResources(obj)
-	if err != nil {
-		return
-	}
-	if len(pkgs) != 1 {
-		return nil, errors.Errorf("1 package expected but %d provided", len(pkgs))
-	}
-	return &K8sPackage{pkgs[0], obj}, nil
-}
-
-func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []string) io.ReadCloser {
-	if namespace == "" && name == "" && len(namespaces) == 0 {
+func manifest2pkgobjects(reader io.Reader, name, namespace string) io.ReadCloser {
+	if namespace == "" && name == "" {
 		return &noopReadCloser{reader}
 	}
 	pReader, pWriter := io.Pipe()
@@ -78,8 +77,8 @@ func manifest2pkgobjects(reader io.Reader, namespace, name string, namespaces []
 			if name != "" {
 				labels[PKG_NAME_LABEL] = name
 			}
-			if len(namespaces) > 0 {
-				labels[PKG_NS_LABEL] = strings.Join(namespaces, ".")
+			if namespace != "" {
+				labels[PKG_NS_LABEL] = namespace
 			}
 			return &transform.TransformOptions{
 				Resources:    []string{"manifest.yaml"},

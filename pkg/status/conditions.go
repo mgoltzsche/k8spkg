@@ -5,16 +5,18 @@ import (
 	"strings"
 
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 var (
 	condGeneric       = genericCondition("genericCondition")
 	RolloutConditions = map[string]Condition{
-		"Deployment":  &RolloutCondition{"replicas", "readyReplicas"},
+		"Deployment":  DeploymentRolloutCondition("available"),
 		"Pod":         NewCondition("ready"),
 		"Job":         NewCondition("ready"),
 		"Certificate": NewCondition("ready"),
-		"DaemonSet":   &RolloutCondition{"desiredNumberScheduled", "numberReady"},
+		"DaemonSet":   DaemonSetRolloutCondition("daemonset-rollout-condition"),
+		"APIService":  NewCondition("available"),
 	}
 )
 
@@ -40,7 +42,6 @@ type conditionType string
 func (c conditionType) Status(o *resource.K8sResource) (r ConditionStatus) {
 	for _, cond := range o.Conditions() {
 		if strings.ToLower(cond.Type) == string(c) {
-			r.Status = cond.Status
 			msg := cond.Reason
 			if msg == "" {
 				msg = cond.Type
@@ -49,10 +50,11 @@ func (c conditionType) Status(o *resource.K8sResource) (r ConditionStatus) {
 				msg += ": " + cond.Message
 			}
 			r.Description = msg
+			r.Status = cond.Status
 			return
 		}
 	}
-	r.Description = fmt.Sprintf("condition %q is not present", c)
+	r.Description = fmt.Sprintf("condition %s not present", c)
 	return
 }
 
@@ -62,8 +64,12 @@ func (c genericCondition) Status(o *resource.K8sResource) (r ConditionStatus) {
 	conditionsMet := make([]string, 0, len(o.Conditions()))
 	for _, cond := range o.Conditions() {
 		if !cond.Status {
+			msg := cond.Type + ": " + cond.Reason
+			if cond.Message != "" {
+				msg += ": " + cond.Message
+			}
+			r.Description = msg
 			r.Status = cond.Status
-			r.Description = cond.Type + ":" + cond.Reason + ": " + cond.Message
 			return
 		} else {
 			conditionsMet = append(conditionsMet, strings.ToLower(cond.Type))
@@ -78,16 +84,49 @@ func (c genericCondition) Status(o *resource.K8sResource) (r ConditionStatus) {
 	return
 }
 
-type RolloutCondition struct {
-	DesiredField string
-	ReadyField   string
+type DeploymentRolloutCondition conditionType
+
+func (c DeploymentRolloutCondition) Status(o *resource.K8sResource) (r ConditionStatus) {
+	s := conditionType(c).Status(o)
+	replicas, _, _ := unstructured.NestedFloat64(o.Raw(), "spec", "replicas")
+	scheduledReplicas, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "replicas")
+	readyReplicas, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "readyReplicas")
+	updatedReplicas, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "updatedReplicas")
+	generation, _, _ := unstructured.NestedFloat64(o.Raw(), "metadata", "generation")
+	generationObserved, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "observedGeneration")
+	generationUpToDate := generation == generationObserved
+	if !generationUpToDate {
+		updatedReplicas = 0
+	}
+	status := generationUpToDate &&
+		updatedReplicas == replicas &&
+		readyReplicas == scheduledReplicas &&
+		readyReplicas == replicas
+	r.Status = s.Status && status
+	suffix := "ready"
+	if !r.Status {
+		suffix = "updated"
+		if status && !s.Status {
+			suffix += ", " + s.Description
+		}
+	}
+	r.Description = fmt.Sprintf("%.0f/%.0f %s", updatedReplicas, replicas, suffix)
+	return
 }
 
-func (c *RolloutCondition) Status(o *resource.K8sResource) (r ConditionStatus) {
+type DaemonSetRolloutCondition string
+
+func (c DaemonSetRolloutCondition) Status(o *resource.K8sResource) (r ConditionStatus) {
 	if r = condGeneric.Status(o); r.Status {
-		desired, ready := o.RolloutStatus(c.DesiredField, c.ReadyField)
-		r.Status = desired == ready // TODO: sufficient? consider updatedReplicas?
-		r.Description = fmt.Sprintf("%d/%d ready", ready, desired)
+		misscheduled, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "numberMisscheduled")
+		desired, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "desiredNumberScheduled")
+		ready, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "numberReady")
+		generation, _, _ := unstructured.NestedFloat64(o.Raw(), "metadata", "generation")
+		generationObserved, _, _ := unstructured.NestedFloat64(o.Raw(), "status", "observedGeneration")
+		r.Status = desired == ready &&
+			generation == generationObserved &&
+			int64(misscheduled) == 0
+		r.Description = fmt.Sprintf("%.0f/%.0f ready", ready, desired)
 	}
 	return
 }

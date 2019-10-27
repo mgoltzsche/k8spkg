@@ -12,8 +12,8 @@ import (
 )
 
 var testApp = &App{Name: "myapp", Namespace: "myns", Resources: []resource.K8sResourceRef{
-	resource.ResourceRef("apps", "v1", "Deployment", "myns", "mydeployment"),
-	resource.ResourceRef("apiservice", "v1", "APIService", "", "myapi"),
+	resource.ResourceRef("apps/v1", "Deployment", "myns", "mydeployment"),
+	resource.ResourceRef("apiservice/v1", "APIService", "", "myapi"),
 }}
 
 func assertAppRepoCall(t *testing.T, call func(*AppRepo, *mock.ClientMock) error) {
@@ -31,16 +31,11 @@ func assertAppRepoCall(t *testing.T, call func(*AppRepo, *mock.ClientMock) error
 func testAppResource(t *testing.T, apps ...*App) resource.K8sResourceList {
 	appRes := resource.K8sResourceList(make([]*resource.K8sResource, len(apps)))
 	for i, app := range apps {
-		ref := resource.ResourceRef(CrdAPIGroup, CrdAPIVersion, CrdKind, app.Namespace, app.Name)
+		ref := resource.ResourceRef(CrdAPIGroup+"/"+CrdAPIVersion, CrdKind, app.Namespace, app.Name)
 		res := make([]interface{}, len(app.Resources))
 		for j, r := range app.Resources {
-			apiVersion := r.APIVersion()
-			apiGroup := r.APIGroup()
-			if apiGroup != "" {
-				apiVersion = apiGroup + "/" + apiVersion
-			}
 			res[j] = map[string]interface{}{
-				"apiVersion": apiVersion,
+				"apiVersion": r.APIVersion(),
 				"kind":       r.Kind(),
 				"name":       r.Name(),
 				"namespace":  r.Namespace(),
@@ -87,7 +82,7 @@ func TestAppRepoGetAll(t *testing.T) {
 		Name:      "anotherapp",
 		Namespace: "myns",
 		Resources: []resource.K8sResourceRef{
-			resource.ResourceRef("apps", "v1", "Deployment", "", "anotherdeployment"),
+			resource.ResourceRef("apps/v1", "Deployment", "", "anotherdeployment"),
 		},
 	}
 	expectedCalls := []string{
@@ -100,9 +95,18 @@ func TestAppRepoGetAll(t *testing.T) {
 	res := testAppResource(t, testApp, testApp2)
 	assertAppRepoCall(t, func(testee *AppRepo, c *mock.ClientMock) (err error) {
 		c.MockResources = res
-		retrieved, err := testee.GetAll(context.Background(), testApp.Namespace)
+		var apps []*App
+		for evt := range testee.GetAll(context.Background(), testApp.Namespace) {
+			if evt.Err != nil {
+				if err == nil {
+					err = evt.Err
+				}
+				continue
+			}
+			apps = append(apps, evt.App)
+		}
 		if err == nil {
-			require.Equal(t, expectedApps, retrieved, "get")
+			require.Equal(t, expectedApps, apps, "get")
 			require.Equal(t, expectedCalls, c.Calls, "client calls")
 		}
 		return

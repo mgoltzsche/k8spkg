@@ -33,20 +33,24 @@ var (
 				return errors.New("no arguments supported")
 			}
 			ctx := newContext()
-			apps, err := pkgManager().List(ctx, namespace)
-			if err != nil {
-				return
-			}
 			nameLen := 7
-			for _, app := range apps {
-				if len(app.Name) > nameLen {
-					nameLen = len(app.Name)
+			apps := [][2]string{}
+			for evt := range pkgManager().List(ctx, namespace) {
+				if evt.Err != nil {
+					if err == nil {
+						err = evt.Err
+					}
+					continue
 				}
+				if len(evt.App.Name) > nameLen {
+					nameLen = len(evt.App.Name)
+				}
+				apps = append(apps, [2]string{evt.App.Name, evt.App.Namespace})
 			}
 			lineFmt := "%-" + strconv.Itoa(nameLen) + "s    %s\n"
 			fmt.Printf(lineFmt, "APP", "NAMESPACE") // TODO: add kinds, ...?
 			for _, app := range apps {
-				fmt.Printf(lineFmt, app.Name, app.Namespace)
+				fmt.Printf(lineFmt, app[0], app[1])
 			}
 			return
 		},

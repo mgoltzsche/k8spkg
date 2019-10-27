@@ -34,7 +34,6 @@ metadata:
 	require.Equal(t, 2, len(pkg.Resources), "len(pkg.Objects)")
 	for _, o := range pkg.Resources {
 		require.True(t, o.Namespace() == "cert-manager" || o.Namespace() == "kube-system", "unexpected namespace: "+o.Namespace())
-		require.Equal(t, "cert-manager.kube-system", o.Labels()[PKG_NS_LABEL], "pkg namespace label")
 	}
 	pkg, err = PkgFromManifest(bytes.NewReader([]byte(plainManifest)), "", "")
 	require.Error(t, err, "unlabeled package objects should yield error")
@@ -63,6 +62,5 @@ metadata:
 	for _, o := range pkg.Resources {
 		require.Equal(t, "somepkg", o.Labels()[PKG_NAME_LABEL], "pkg name label should be preserved")
 		require.True(t, o.Namespace() == "cert-manager" || o.Namespace() == "kube-system", "unexpected namespace: "+o.Namespace())
-		require.Equal(t, "cert-manager.kube-system", o.Labels()[PKG_NS_LABEL], "pkg namespace label in otherwise untouched manifest")
 	}
 }

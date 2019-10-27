@@ -7,6 +7,7 @@ import (
 	"github.com/mgoltzsche/k8spkg/pkg/client"
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/pkg/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 var (
@@ -24,6 +25,11 @@ func IsAppNotFound(err error) bool {
 	return ok
 }
 
+type AppEvent struct {
+	App *App
+	Err error
+}
+
 type AppRepo struct {
 	client client.K8sClient
 }
@@ -32,19 +38,26 @@ func NewAppRepo(client client.K8sClient) *AppRepo {
 	return &AppRepo{client}
 }
 
-func (m *AppRepo) GetAll(ctx context.Context, namespace string) (apps []*App, err error) {
-	var e error
-	var a *App
-	kinds := []string{strings.ToLower(CrdKind) + "." + CrdAPIGroup}
-	l, err := m.client.Get(ctx, kinds, namespace, nil)
-	apps = make([]*App, 0, len(l))
-	for _, res := range l {
-		if a, e = appFromResource(res); e != nil && err == nil {
-			err = e
+func (m *AppRepo) GetAll(ctx context.Context, namespace string) <-chan AppEvent {
+	evts := make(chan AppEvent)
+	go func() {
+		var err error
+		var a *App
+		kinds := []string{strings.ToLower(CrdKind) + "." + CrdAPIGroup}
+		for evt := range m.client.Get(ctx, kinds, namespace, nil) {
+			if evt.Error == nil {
+				if a, err = appFromResource(evt.Resource); err != nil {
+					evts <- AppEvent{Err: err}
+				} else {
+					evts <- AppEvent{App: a}
+				}
+			} else {
+				evts <- AppEvent{Err: evt.Error}
+			}
 		}
-		apps = append(apps, a)
-	}
-	return
+		close(evts)
+	}()
+	return evts
 }
 
 func (m *AppRepo) Get(ctx context.Context, namespace, name string) (app *App, err error) {
@@ -60,23 +73,24 @@ func (m *AppRepo) Put(ctx context.Context, app *App) (err error) {
 	// TODO: do optimistic locking and merge resources
 	appRes := resourceFromApp(app)
 	_, err = m.client.Apply(ctx, app.Namespace, []*resource.K8sResource{appRes}, false, nil)
-	return errors.Wrapf(err, "put app crd %s:%s", app.Namespace, app.Name)
+	return errors.Wrapf(err, "put app resource %s:%s", app.Namespace, app.Name)
 }
 
 func (m *AppRepo) Delete(ctx context.Context, app *App) (err error) {
 	err = m.client.Delete(ctx, app.Namespace, []resource.K8sResourceRef{resourceFromApp(app)})
-	return errors.Wrapf(err, "delete app crd %s:%s", app.Namespace, app.Name)
+	return errors.Wrapf(err, "delete app resource %s:%s", app.Namespace, app.Name)
 }
 
 func appFromResource(obj *resource.K8sResource) (a *App, err error) {
 	var (
 		resOk, refOk, apiVersionOk, kindOk, nsOk, nameOk bool
 		refMap                                           map[string]interface{}
-		refMap2                                          map[interface{}]interface{}
-		apiGroup, apiVersion, kind, name, namespace      string
+		apiVersion, kind, name, namespace                string
 	)
-	spec := obj.Spec()
-	rawRefs, resOk := spec["resources"].([]interface{})
+	rawRefs, resOk, err := unstructured.NestedSlice(obj.Raw(), "spec", "resources")
+	if err != nil {
+		return
+	}
 	resources := make([]resource.K8sResourceRef, 0, len(rawRefs))
 	if resOk && len(rawRefs) > 0 {
 		for _, rawRef := range rawRefs {
@@ -90,23 +104,6 @@ func appFromResource(obj *resource.K8sResource) (a *App, err error) {
 				} else {
 					namespace, nsOk = nsRaw.(string)
 				}
-			} else if refMap2, refOk = rawRef.(map[interface{}]interface{}); refOk {
-				// additional case due to variant behaviour of yaml unmarshaller
-				apiVersion, apiVersionOk = refMap2["apiVersion"].(string)
-				kind, kindOk = refMap2["kind"].(string)
-				name, nameOk = refMap2["name"].(string)
-				nsRaw := refMap["namespace"]
-				if nsOk = nsRaw == nil; nsOk {
-					namespace = ""
-				} else {
-					namespace, nsOk = nsRaw.(string)
-				}
-			}
-			apiGroup = ""
-			gv := strings.SplitN(apiVersion, "/", 2)
-			if len(gv) == 2 {
-				apiGroup = gv[0]
-				apiVersion = gv[1]
 			}
 			if !refOk || !apiVersionOk || !kindOk || !nameOk || !nsOk ||
 				apiVersion == "" || kind == "" || name == "" {
@@ -116,26 +113,21 @@ func appFromResource(obj *resource.K8sResource) (a *App, err error) {
 				continue
 			}
 			resources = append(resources,
-				resource.ResourceRef(apiGroup, apiVersion, kind, namespace, name))
+				resource.ResourceRef(apiVersion, kind, namespace, name))
 		}
 	} else {
-		err = errors.Errorf("app spec does not specify resources: %#v", spec)
+		err = errors.Errorf("app spec does not specify resources: %#v", obj.Raw())
 	}
-	err = errors.WithMessagef(err, "read app crd resource %s", obj.Name())
+	err = errors.WithMessagef(err, "read app resource %s", obj.Name())
 	return &App{Name: obj.Name(), Namespace: obj.Namespace(), Resources: resources}, err
 }
 
 func resourceFromApp(app *App) (r *resource.K8sResource) {
-	ref := resource.ResourceRef(CrdAPIGroup, CrdAPIVersion, CrdKind, app.Namespace, app.Name)
+	ref := resource.ResourceRef(CrdAPIGroup+"/"+CrdAPIVersion, CrdKind, app.Namespace, app.Name)
 	res := make([]interface{}, len(app.Resources))
 	for i, r := range app.Resources {
-		apiVersion := r.APIVersion()
-		apiGroup := r.APIGroup()
-		if apiGroup != "" {
-			apiVersion = apiGroup + "/" + apiVersion
-		}
 		res[i] = map[string]interface{}{
-			"apiVersion": apiVersion,
+			"apiVersion": r.APIVersion(),
 			"kind":       r.Kind(),
 			"name":       r.Name(),
 			"namespace":  r.Namespace(),

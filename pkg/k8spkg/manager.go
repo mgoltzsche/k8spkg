@@ -3,10 +3,10 @@ package k8spkg
 import (
 	"context"
 	"fmt"
-	"os"
+	"regexp"
 	"sort"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/mgoltzsche/k8spkg/pkg/client"
 	"github.com/mgoltzsche/k8spkg/pkg/resource"
@@ -18,7 +18,7 @@ import (
 const (
 	// See https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
 	PKG_NAME_LABEL = "app.kubernetes.io/part-of"
-	PKG_NS_LABEL   = "k8spkg.mgoltzsche.github.com/namespaces"
+	PKG_NS_LABEL   = "k8spkg.mgoltzsche.github.com/namespace"
 )
 
 type notFoundError struct {
@@ -41,7 +41,7 @@ func NewPackageManager(client client.K8sClient, namespace string) *PackageManage
 	return &PackageManager{namespace, client, NewAppRepo(client), nil}
 }
 
-func (m *PackageManager) List(ctx context.Context, namespace string) (apps []*App, err error) {
+func (m *PackageManager) List(ctx context.Context, namespace string) <-chan AppEvent {
 	return m.installedApps.GetAll(ctx, namespace)
 }
 
@@ -54,106 +54,150 @@ func (m *PackageManager) Status(ctx context.Context, pkg *K8sPackage) (err error
 }
 
 func (m *PackageManager) await(ctx context.Context, appName string, resources resource.K8sResourceList, conditions map[string]status.Condition) (err error) {
-	ctx, cancel := context.WithCancel(ctx)
-	reg := status.NewResourceTracker(resources, conditions)
-	ready := false
-	found := false
-	deadline, hasDeadline := ctx.Deadline()
-	watchCtx := ctx
-	if hasDeadline {
-		watchCtx, _ = context.WithDeadline(ctx, deadline.Add(-7*time.Second))
+	var conditional []resource.K8sResourceRef
+	refs := resources.Refs()
+	for _, ref := range refs {
+		if conditions[ref.Kind()] != nil {
+			conditional = append(conditional, ref)
+		}
 	}
-	ch := m.watch(watchCtx, appName, resources.Refs())
-findLoop:
+	watchCtx, cancel := context.WithCancel(ctx)
+	evts := Events(watchCtx, refs, m.client)
+	resEvts := m.watch(watchCtx, appName, conditional)
+	statusEvts := status.Emitter(resEvts, conditions)
+	tracker := status.NewTracker(conditional, statusEvts)
+	result := tracker.Result()
+	changes := tracker.Changes()
+	ready := tracker.Ready()
+	go tracker.Run()
 	for {
-		for evt := range ch {
-			if evt.Error == nil {
-				if s, changed := reg.Update(evt.Resource); changed {
-					msg := fmt.Sprintf("%s/%s: %s", strings.ToLower(evt.Resource.Kind()), evt.Resource.Name(), s.Description)
-					if s.Status {
-						logrus.Info(msg)
-						if ready = reg.Ready(); ready {
-							cancel()
-						}
-					} else {
-						logrus.Warn(msg)
-					}
-					if reg.Found() && !found {
-						found = true
-						if !ready {
-							if podCh := m.watchPods(watchCtx, reg); len(podCh) > 0 {
-								ch = resource.WatchEventUnion(append(podCh, ch))
-								continue findLoop
-							}
-						}
-					}
+		if changes == nil && evts == nil && ready == nil {
+			break
+		}
+		select {
+		case evt, ok := <-changes:
+			// status update
+			if !ok {
+				changes = nil
+				cancel()
+				continue
+			}
+			if evt.Err == nil {
+				msg := fmt.Sprintf("%s/%s: %s", strings.ToLower(evt.Resource.Kind()), evt.Resource.Name(), evt.Status.Description)
+				if evt.Status.Status {
+					logrus.Info(msg)
+				} else {
+					logrus.Warn(msg)
 				}
-			} else if err == nil && !ready {
-				err = evt.Error
+			} else if err == nil {
+				if errors.Cause(evt.Err) != context.Canceled {
+					err = evt.Err
+				}
 				cancel()
 			}
-		}
-		break
-	}
-	if !reg.Ready() {
-		var failedPods resource.K8sResourceList
-		failedObj := 0
-		for _, o := range reg.Status() {
-			if !o.Status.Status {
-				failedObj++
-				logrus.Errorf("%s/%s: %s", strings.ToLower(o.Resource.Kind()), o.Resource.Name(), o.Status.Description)
-				if o.Resource.Kind() == "Pod" {
-					failedPods = append(failedPods, o.Resource)
-				}
+		case evt, ok := <-evts:
+			// event
+			if !ok {
+				evts = nil
+				continue
 			}
-		}
-		if err == nil {
-			err = errors.Errorf("%d resources did not meet condition", failedObj)
-		}
-		if len(failedPods) > 0 {
-			// TODO: group common pods and print logs of a pod per group
-			pod := failedPods[0]
-			for _, cs := range pod.ContainerStatuses() {
-				if cs.ExitCode > 0 {
-					if e := m.client.ContainerLogs(ctx, pod.Namespace(), pod.Name(), cs.Name, os.Stderr); err != nil {
-						logrus.Warn(e)
+			if evt.Type != "Normal" {
+				// TODO: don't handle events that belong to an old replica!
+				//   (Then the BackOff event could be used to reliably fail the deployment fast.)
+				//   Could be achieved by getting the latest replicaset version
+				//   and compare its pod name prefix with the failed pod
+				msg := fmt.Sprintf("%s/%s: %s", strings.ToLower(evt.InvolvedObject.Kind()), evt.InvolvedObject.Name(), evt.Reason)
+				if evt.Message != "" {
+					msg += ": " + evt.Message
+				}
+				if evt.Reason == "BackOff" {
+					logrus.Error(msg)
+					container := containerNameFromFieldPath(evt.InvolvedFieldPath)
+					if evt.InvolvedObject.Kind() == "Pod" && container != "" {
+						m.logPodError(watchCtx, evt.InvolvedObject, container)
 					}
-					break
+				} else {
+					logrus.Warn(msg)
 				}
 			}
+		case _, ok := <-ready:
+			// all tracked resources ready - cancel watches
+			if !ok {
+				ready = nil
+				continue
+			}
+			cancel()
 		}
+	}
+	summary := <-result
+	for _, o := range summary.Resources {
+		if !o.Status.Status {
+			logrus.Errorf("%s/%s: %s", strings.ToLower(o.Resource.Kind()), o.Resource.Name(), o.Status.Description)
+		}
+	}
+	if err == nil && !summary.Ready {
+		err = errors.New("resources did not meet condition")
+	}
+	if e := ctx.Err(); e != nil {
+		err = e
 	}
 	return
 }
 
-func (m *PackageManager) watchPods(ctx context.Context, t *status.ResourceTracker) (ch []<-chan resource.ResourceEvent) {
-	status := t.Status()
-	podNs := map[string]bool{}
-	for _, o := range status {
-		if o.Resource.Kind() == "Pod" {
-			podNs[o.Resource.Namespace()] = true
-		}
+var containerNamePattern = regexp.MustCompile("^spec\\.containers\\{([^}]+)}$")
+
+func containerNameFromFieldPath(fieldPath string) string {
+	m := containerNamePattern.FindStringSubmatch(fieldPath)
+	if len(m) == 2 {
+		return m[1]
 	}
-	for _, o := range status {
-		if !o.Status.Status && (o.Resource.Kind() == "Deployment" || o.Resource.Kind() == "DaemonSet") && !podNs[o.Resource.Namespace()] {
-			ch = append(ch, m.client.Watch(ctx, "Pod", o.Resource.Namespace(), o.Resource.SelectorMatchLabels()))
+	return ""
+}
+
+func (m *PackageManager) logPodError(ctx context.Context, pod resource.K8sResourceRef, container string) {
+	writer := newChanWriter()
+	go func() {
+		if e := m.client.ContainerLogs(ctx, pod.Namespace(), pod.Name(), container, false, true, writer); e != nil {
+			logrus.Debug(e)
 		}
+		writer.Close()
+	}()
+	ctxLogged := false
+	for logLine := range writer.Chan() {
+		if !ctxLogged {
+			ctxLogged = true
+			logrus.Errorf("pod/%s: container %s logs:", pod.Name(), container)
+		}
+		logrus.Error(" " + logLine)
 	}
-	return
 }
 
 func (m *PackageManager) watch(ctx context.Context, appName string, resources resource.K8sResourceRefList) <-chan resource.ResourceEvent {
-	ch := []<-chan resource.ResourceEvent{}
+	if len(resources) == 0 {
+		panic("watch: no resources provided")
+	}
 	pkgSelector := m.labelSelector(appName)
+	evts := make(chan resource.ResourceEvent)
+	wg := sync.WaitGroup{}
 	for _, byNs := range resources.GroupByNamespace() {
 		if byNs.Key == "" {
 			byNs.Key = m.namespace
 		}
 		for _, byKind := range byNs.Resources.GroupByKind() {
-			ch = append(ch, m.client.Watch(ctx, byKind.Key, byNs.Key, pkgSelector))
+			wg.Add(1)
+			go func(kind, ns string) {
+				for evt := range m.client.Watch(ctx, kind, ns, pkgSelector, false) {
+					evts <- evt
+				}
+				wg.Done()
+			}(byKind.Key, byNs.Key)
 		}
 	}
-	return resource.WatchEventUnion(ch)
+	go func() {
+		wg.Wait()
+		close(evts)
+	}()
+	return evts
 }
 
 func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool) (err error) {
@@ -168,6 +212,7 @@ func (m *PackageManager) Apply(ctx context.Context, pkg *K8sPackage, prune bool)
 	}
 	pkgLabel := []string{PKG_NAME_LABEL + "=" + pkg.Name}
 	applied, err := m.client.Apply(ctx, app.Namespace, pkg.Resources, prune, pkgLabel)
+	// TODO: detect which resources changed or have been created
 	if err == nil {
 		err = m.await(ctx, pkg.Name, applied, status.RolloutConditions)
 	}
@@ -183,7 +228,7 @@ func (m *PackageManager) Delete(ctx context.Context, name string) (err error) {
 		logrus.Infof("Deleting %s...", name)
 		resources := app.Resources
 		sort.Sort(reverseResources(resources))
-		if err = m.deleteResources(ctx, app.Name, resources); err == nil {
+		if err = m.deleteResources(ctx, resources); err == nil {
 			if err = m.installedApps.Delete(ctx, app); err == nil {
 				logrus.Infof("Deleted %s", name)
 			}
@@ -193,12 +238,12 @@ func (m *PackageManager) Delete(ctx context.Context, name string) (err error) {
 }
 
 func (m *PackageManager) DeleteResources(ctx context.Context, obj resource.K8sResourceRefList) (err error) {
-	return m.deleteResources(ctx, "", obj)
+	return m.deleteResources(ctx, obj)
 }
 
-func (m *PackageManager) deleteResources(ctx context.Context, appName string, obj resource.K8sResourceRefList) (err error) {
+func (m *PackageManager) deleteResources(ctx context.Context, obj resource.K8sResourceRefList) (err error) {
 	if err = m.client.Delete(ctx, m.namespace, obj); err == nil {
-		m.client.AwaitDeletion(ctx, m.namespace, obj)
+		err = m.client.AwaitDeletion(ctx, m.namespace, obj)
 	}
 	return
 }

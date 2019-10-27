@@ -6,7 +6,6 @@ import (
 )
 
 type K8sResourceRef interface {
-	APIGroup() string
 	APIVersion() string
 	Kind() string
 	Name() string
@@ -16,16 +15,14 @@ type K8sResourceRef interface {
 }
 
 type k8sResourceRef struct {
-	apiGroup   string
 	apiVersion string
 	kind       string
 	name       string
 	namespace  string
 }
 
-func ResourceRef(apiGroup, apiVersion, kind, namespace, name string) *k8sResourceRef {
+func ResourceRef(apiVersion, kind, namespace, name string) *k8sResourceRef {
 	return &k8sResourceRef{
-		apiGroup:   apiGroup,
 		apiVersion: apiVersion,
 		kind:       kind,
 		name:       name,
@@ -33,9 +30,6 @@ func ResourceRef(apiGroup, apiVersion, kind, namespace, name string) *k8sResourc
 	}
 }
 
-func (o *k8sResourceRef) APIGroup() string {
-	return o.apiGroup
-}
 func (o *k8sResourceRef) APIVersion() string {
 	return o.apiVersion
 }
@@ -55,9 +49,13 @@ func (o *k8sResourceRef) String() string {
 	return o.ID()
 }
 func (o *k8sResourceRef) QualifiedKind() (kind string) {
+	apiGroup := ""
+	if gv := strings.SplitN(o.apiVersion, "/", 2); len(gv) == 2 {
+		apiGroup = gv[0]
+	}
 	kind = strings.ToLower(o.kind)
-	if o.apiGroup != "" {
-		kind += "." + o.apiGroup
+	if apiGroup != "" {
+		kind += "." + apiGroup
 	}
 	return
 }

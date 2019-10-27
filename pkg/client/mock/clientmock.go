@@ -74,11 +74,6 @@ func (c *ClientMock) AwaitDeletion(ctx context.Context, namespace string, resour
 	c.call("awaitdeletion %s/ %+v", namespace, resources.Names())
 	return c.MockErr
 }
-func (c *ClientMock) Get(ctx context.Context, kinds []string, namespace string, labels []string) (resource.K8sResourceList, error) {
-	requireContext(ctx)
-	c.call("get %s/ %s %+v", namespace, strings.Join(kinds, ","), labels)
-	return c.MockResources, c.MockErr
-}
 func (c *ClientMock) GetResource(ctx context.Context, kind, namespace, name string) (*resource.K8sResource, error) {
 	requireContext(ctx)
 	c.call("getresource %s/ %s %s", namespace, kind, name)
@@ -87,24 +82,44 @@ func (c *ClientMock) GetResource(ctx context.Context, kind, namespace, name stri
 	}
 	return c.MockResource, c.MockErr
 }
-func (c *ClientMock) Watch(ctx context.Context, kind, namespace string, labels []string) <-chan resource.ResourceEvent {
+func (c *ClientMock) Get(ctx context.Context, kinds []string, namespace string, labels []string) <-chan resource.ResourceEvent {
+	requireContext(ctx)
+	c.call("get %s/ %s %+v", namespace, strings.Join(kinds, ","), labels)
+	ch := make(chan resource.ResourceEvent)
+	go func() {
+		if c.MockErr == nil {
+			for _, res := range c.MockResources {
+				ch <- resource.ResourceEvent{Resource: res}
+			}
+		} else {
+			ch <- resource.ResourceEvent{Error: c.MockErr}
+		}
+		close(ch)
+	}()
+	return ch
+}
+func (c *ClientMock) Watch(ctx context.Context, kind, namespace string, labels []string, watchOnly bool) <-chan resource.ResourceEvent {
 	requireContext(ctx)
 	sort.Strings(labels)
-	c.call("watch %s/%s %+v", namespace, kind, labels)
+	c.call("watch %s/%s %+v %v", namespace, kind, labels, watchOnly)
 	watchEvents := c.MockWatchEvents
 	if len(watchEvents) == 0 {
 		for _, res := range c.Applied {
-			// TODO: set positive status
+			// set positive status
 			m := (&unstructured.Unstructured{res.Raw()}).DeepCopy().Object
+			unstructured.SetNestedField(m, 3.0, "metadata", "generation")
+			unstructured.SetNestedField(m, 2.0, "spec", "replicas")
 			m["status"] = map[string]interface{}{
 				"conditions": []interface{}{
 					map[string]interface{}{"type": "Available", "status": "True"},
 					map[string]interface{}{"type": "Ready", "status": "True"},
 				},
-				"replicas":               2,
-				"readyReplicas":          2,
-				"desiredNumberScheduled": 3,
-				"numberReady":            3,
+				"observedGeneration":     3.0,
+				"replicas":               2.0,
+				"readyReplicas":          2.0,
+				"updatedReplicas":        2.0,
+				"desiredNumberScheduled": 2.0,
+				"numberReady":            2.0,
 			}
 			res = resource.FromMap(m)
 			watchEvents = append(watchEvents, resource.ResourceEvent{res, nil})
@@ -125,9 +140,9 @@ func (c *ClientMock) ResourceTypes(ctx context.Context) (types []*client.APIReso
 	return c.MockTypes, c.MockErr
 }
 
-func (c *ClientMock) ContainerLogs(ctx context.Context, namespace, podName, containerName string, writer io.Writer) (err error) {
+func (c *ClientMock) ContainerLogs(ctx context.Context, namespace, podName, containerName string, previous, follow bool, writer io.Writer) (err error) {
 	requireContext(ctx)
-	c.call("logs")
+	c.call("logs") // TODO: test previous, follow
 	fmt.Fprintf(writer, "mock log line 1\nmock log line 2\n")
 	return c.MockErr
 }

@@ -13,7 +13,7 @@ type K8sResourceList []*K8sResource
 func FromReader(reader io.Reader) (l K8sResourceList, err error) {
 	obj := []*K8sResource{}
 	o := map[string]interface{}{}
-	dec := yaml.NewYAMLOrJSONDecoder(reader, 8192)
+	dec := yaml.NewYAMLOrJSONDecoder(reader, 1024)
 	for ; err == nil; err = dec.Decode(&o) {
 		if len(o) > 0 {
 			if err = appendFlattened(o, &obj); err != nil {

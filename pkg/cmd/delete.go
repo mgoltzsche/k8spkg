@@ -16,7 +16,7 @@ limitations under the License.
 package cmd
 
 import (
-	"github.com/mgoltzsche/k8spkg/pkg/k8spkg"
+	"github.com/mgoltzsche/k8spkg/pkg/resource"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +50,7 @@ var (
 				return
 			}
 			defer reader.Close()
-			obj, err := k8spkg.TransformedObjects(reader, namespace, "")
+			obj, err := resource.FromReader(reader)
 			if err != nil {
 				return
 			}

@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -21,12 +22,12 @@ type K8sClient interface {
 	Apply(ctx context.Context, namespace string, resources resource.K8sResourceList, prune bool, labels []string) (resource.K8sResourceList, error)
 	Delete(ctx context.Context, namespace string, resources resource.K8sResourceRefList) (err error)
 	GetResource(ctx context.Context, kind string, namespace string, name string) (*resource.K8sResource, error)
-	Get(ctx context.Context, kinds []string, namespace string, labels []string) (resource.K8sResourceList, error)
+	Get(ctx context.Context, kinds []string, namespace string, labels []string) <-chan resource.ResourceEvent
 	//WatchResource(ctx context.Context, kind, namespace string, name string) <-chan WatchEvent
-	Watch(ctx context.Context, kind, namespace string, labels []string) <-chan resource.ResourceEvent
+	Watch(ctx context.Context, kind, namespace string, labels []string, watchOnly bool) <-chan resource.ResourceEvent
 	AwaitDeletion(ctx context.Context, namespace string, resources resource.K8sResourceRefList) (err error)
 	ResourceTypes(ctx context.Context) (types []*APIResourceType, err error)
-	ContainerLogs(ctx context.Context, namespace, podName, containerName string, writer io.Writer) (err error)
+	ContainerLogs(ctx context.Context, namespace, podName, containerName string, previous, follow bool, writer io.Writer) (err error)
 }
 
 type notFoundError struct {
@@ -77,24 +78,31 @@ func NewK8sClient(kubeconfigFile string) K8sClient {
 	return &k8sClient{kubeconfigFile}
 }
 
-func (c *k8sClient) Apply(ctx context.Context, namespace string, resources resource.K8sResourceList, prune bool, labelSelector []string) (resource.K8sResourceList, error) {
-	args := []string{"apply", "-o", "yaml", "--wait", "--timeout=" + getTimeout(ctx), "-f", "-", "--record"}
-	// TODO: delete objects within other namespaces that belong to the package as well
+func (c *k8sClient) Apply(ctx context.Context, namespace string, resources resource.K8sResourceList, prune bool, labelSelector []string) (l resource.K8sResourceList, err error) {
+	args := []string{"apply", "--wait", "-f", "-", "--record", "--timeout=" + getTimeout(ctx)}
 	if len(labelSelector) > 0 {
 		args = append(args, "-l", strings.Join(labelSelector, ","))
 	}
 	if prune {
+		// TODO: delete objects within other namespaces that belong to the package as well
 		args = append(args, "--prune")
 	}
 	if namespace != "" {
 		args = append(args, "-n", namespace)
 	}
-	return c.kubectlObjOut(ctx, args, resources.YamlReader())
+	for evt := range c.kubectlEmit(ctx, resources.YamlReader(), args) {
+		if evt.Error == nil {
+			l = append(l, evt.Resource)
+		} else {
+			err = evt.Error
+		}
+	}
+	return
 }
 
 func (c *k8sClient) Delete(ctx context.Context, namespace string, resources resource.K8sResourceRefList) (err error) {
 	for _, grp := range resources.GroupByNamespace() {
-		args := []string{"delete", "--wait", "--timeout=" + getTimeout(ctx), "--cascade", "--ignore-not-found"}
+		args := []string{"delete", "--wait", "--cascade", "--ignore-not-found", "--timeout=" + getTimeout(ctx)}
 		args = append(args, grp.Resources.Names()...)
 		if grp.Key == "" {
 			grp.Key = namespace
@@ -109,8 +117,7 @@ func (c *k8sClient) Delete(ctx context.Context, namespace string, resources reso
 	return
 }
 
-// TODO: test
-func (c *k8sClient) AwaitDeletion(ctx context.Context, namespace string, resources resource.K8sResourceRefList) (err error) {
+func (c *k8sClient) AwaitDeletion(ctx context.Context, namespace string, resources resource.K8sResourceRefList) error {
 	for _, grp := range resources.GroupByNamespace() {
 		args := []string{"wait", "--for", "delete", "--timeout=" + getTimeout(ctx)}
 		args = append(args, grp.Resources.Names()...)
@@ -120,15 +127,28 @@ func (c *k8sClient) AwaitDeletion(ctx context.Context, namespace string, resourc
 		if grp.Key != "" {
 			args = append(args, "-n", grp.Key)
 		}
-		kubectl(ctx, nil, nil, c.kubeconfigFile, args)
+		if err := kubectl(ctx, nil, nil, c.kubeconfigFile, args); err != nil {
+			if kerr, ok := errors.Cause(err).(*kubectlError); ok {
+				var unexpectedLines []string
+				for _, line := range kerr.stderr {
+					if !strings.HasPrefix(line, "Error from server (NotFound): ") {
+						unexpectedLines = append(unexpectedLines, line)
+					}
+				}
+				if len(unexpectedLines) > 0 {
+					return &kubectlError{kerr.error, unexpectedLines}
+				}
+			} else {
+				return err
+			}
+		}
 	}
-	err = ctx.Err()
-	return
+	return ctx.Err()
 }
 
 func (c *k8sClient) GetResource(ctx context.Context, kind string, namespace string, name string) (r *resource.K8sResource, err error) {
 	args := []string{"--ignore-not-found", strings.ToLower(kind), name}
-	for evt := range c.kubectlGet(ctx, namespace, args) {
+	for evt := range c.kubectlEmit(ctx, nil, getArgs(namespace, args...)) {
 		if evt.Error != nil && err == nil {
 			err = evt.Error
 			continue
@@ -141,46 +161,44 @@ func (c *k8sClient) GetResource(ctx context.Context, kind string, namespace stri
 	return
 }
 
-func (c *k8sClient) Get(ctx context.Context, kinds []string, namespace string, labels []string) (r resource.K8sResourceList, err error) {
+func (c *k8sClient) Get(ctx context.Context, kinds []string, namespace string, labels []string) <-chan resource.ResourceEvent {
 	args := []string{strings.ToLower(strings.Join(kinds, ","))}
 	if len(labels) > 0 {
 		args = append(args, "-l", strings.Join(labels, ","))
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	for evt := range c.kubectlGet(ctx, namespace, args) {
-		if evt.Error != nil {
-			if err == nil {
-				cancel()
-				err = evt.Error
-			}
-		} else {
-			r = append(r, evt.Resource)
-		}
-	}
-	return
+	return c.kubectlEmit(ctx, nil, getArgs(namespace, args...))
 }
 
 /*func (c *k8sClient) WatchResource(ctx context.Context, kind, namespace string, name string) <-chan resource.ResourceEvent {
 	return c.kubectlGet(ctx, namespace, []string{"-w", strings.ToLower(kind), name})
 }*/
 
-func (c *k8sClient) Watch(ctx context.Context, kind, namespace string, labels []string) <-chan resource.ResourceEvent {
+func (c *k8sClient) Watch(ctx context.Context, kind, namespace string, labels []string, watchOnly bool) <-chan resource.ResourceEvent {
 	args := []string{"-w", strings.ToLower(kind)}
 	if len(labels) > 0 {
 		args = append(args, "-l", strings.Join(labels, ","))
 	}
-	return c.kubectlGet(ctx, namespace, args)
+	if watchOnly {
+		args = append(args, "--watch-only")
+	}
+	return c.kubectlEmit(ctx, nil, getArgs(namespace, args...))
 }
 
-func (c *k8sClient) ContainerLogs(ctx context.Context, namespace, podName, containerName string, writer io.Writer) (err error) {
+func (c *k8sClient) ContainerLogs(ctx context.Context, namespace, podName, containerName string, previous, follow bool, writer io.Writer) (err error) {
 	args := []string{"logs", podName, "-c", containerName}
+	if previous {
+		args = append(args, "--previous")
+	} else if follow {
+		args = append(args, "--follow")
+	}
+
 	if namespace != "" {
 		args = append(args, "-n", namespace)
 	}
 	return kubectl(ctx, nil, writer, c.kubeconfigFile, args)
 }
 
-func (c *k8sClient) kubectlGet(ctx context.Context, namespace string, args []string) <-chan resource.ResourceEvent {
+func (c *k8sClient) kubectlEmit(ctx context.Context, stdin io.Reader, args []string) <-chan resource.ResourceEvent {
 	reader, writer := io.Pipe()
 	done := make(chan error)
 	ch := make(chan resource.ResourceEvent)
@@ -197,8 +215,8 @@ func (c *k8sClient) kubectlGet(ctx context.Context, namespace string, args []str
 		done <- err
 	}()
 	go func() {
-		args := getArgs(namespace, args...)
-		err := kubectl(ctx, nil, writer, c.kubeconfigFile, args)
+		args = append(args, "-o", "json")
+		err := kubectl(ctx, stdin, writer, c.kubeconfigFile, args)
 		writer.CloseWithError(err)
 		if e := <-done; e != nil && err == nil {
 			err = errors.Wrap(e, "get")
@@ -209,17 +227,6 @@ func (c *k8sClient) kubectlGet(ctx context.Context, namespace string, args []str
 		close(ch)
 	}()
 	return ch
-}
-
-func (c *k8sClient) kubectlObjOut(ctx context.Context, args []string, stdin io.Reader) (r resource.K8sResourceList, err error) {
-	reader, writer := io.Pipe()
-	go func() {
-		e := kubectl(ctx, stdin, writer, c.kubeconfigFile, args)
-		writer.CloseWithError(e)
-	}()
-	r, err = resource.FromReader(reader)
-	reader.Close()
-	return
 }
 
 func kubectl(ctx context.Context, in io.Reader, out io.Writer, kubeconfigFile string, args []string) (err error) {
@@ -238,14 +245,28 @@ func kubectl(ctx context.Context, in io.Reader, out io.Writer, kubeconfigFile st
 	}
 	stderr := buf.String()
 	if err != nil && len(stderr) > 0 {
-		stderr = strings.ReplaceAll(strings.TrimSpace(stderr), "\n", "\n  ")
-		err = errors.Errorf("%s. %s", err, stderr)
+		stderr = strings.TrimSpace(stderr)
+		err = &kubectlError{errors.WithStack(err), strings.Split(stderr, "\n")}
 	}
-	return errors.Wrapf(err, "%+v", cmd.Args)
+	if e := ctx.Err(); e != nil && err == nil {
+		err = e
+	} else {
+		err = errors.Wrapf(err, "%+v", cmd.Args)
+	}
+	return
+}
+
+type kubectlError struct {
+	error
+	stderr []string
+}
+
+func (e *kubectlError) Error() string {
+	return fmt.Sprintf("%s. stderr: %s", e.error, strings.Join(e.stderr, "\n  "))
 }
 
 func getArgs(namespace string, args ...string) []string {
-	args = append([]string{"get", "-o", "json"}, args...)
+	args = append([]string{"get"}, args...)
 	if namespace != "" {
 		args = append(args, "-n", namespace)
 	}

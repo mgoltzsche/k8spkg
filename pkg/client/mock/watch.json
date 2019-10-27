@@ -794,15 +794,28 @@
         }
     },
     "status": {
+        "availableReplicas": 1,
         "conditions": [
             {
-                "lastTransitionTime": "2019-10-08T22:38:13Z",
-                "lastUpdateTime": "2019-10-08T22:38:13Z",
-                "message": "Deployment does not have minimum availability.",
-                "reason": "MinimumReplicasUnavailable",
-                "status": "False",
+                "lastTransitionTime": "2019-10-08T22:37:48Z",
+                "lastUpdateTime": "2019-10-08T22:37:50Z",
+                "message": "ReplicaSet \"mydeployment-c6bdcf78f\" has successfully progressed.",
+                "reason": "NewReplicaSetAvailable",
+                "status": "True",
+                "type": "Progressing"
+            },
+            {
+                "lastTransitionTime": "2019-10-08T22:38:28Z",
+                "lastUpdateTime": "2019-10-08T22:38:28Z",
+                "message": "Deployment has minimum availability.",
+                "reason": "MinimumReplicasAvailable",
+                "status": "True",
                 "type": "Available"
             }
-        ]
+        ],
+        "observedGeneration": 1,
+        "readyReplicas": 1,
+        "replicas": 1,
+        "updatedReplicas": 1
     }
 }

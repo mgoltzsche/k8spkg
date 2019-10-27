@@ -41,18 +41,12 @@ status:
 	require.NoError(t, err)
 	require.Equal(t, 1, len(l), "list size")
 	o := l[0]
-	assert.Equal(t, "certmanager.k8s.io", o.APIGroup(), "apiGroup")
-	assert.Equal(t, "v1alpha1", o.APIVersion(), "apiVersion")
+	assert.Equal(t, "certmanager.k8s.io/v1alpha1", o.APIVersion(), "apiVersion")
 	assert.Equal(t, "Issuer", o.Kind(), "kind")
 	assert.Equal(t, "ca-issuer", o.Name(), "name")
-	assert.Equal(t, "someuid", o.uid, "uid")
 	assert.Equal(t, "cert-manager", o.Namespace(), "namespace")
-	assert.Equal(t, "apps/v1", o.OwnerReferences()[0].APIVersion, "ownerReferences[0].apiVersion")
-	assert.Equal(t, "Deployment", o.OwnerReferences()[0].Kind, "ownerReferences[0].kind")
-	assert.Equal(t, "cert-manager-webhook", o.OwnerReferences()[0].Name, "ownerReferences[0].name")
 	assert.Equal(t, "issuer.certmanager.k8s.io:cert-manager:ca-issuer", o.ID(), "ID()")
 	assert.Equal(t, "issuer.certmanager.k8s.io", o.QualifiedKind(), "QualifiedKind()")
-	assert.Equal(t, "akind.agroup", o.CrdQualifiedKind(), "crd group/kind")
 	if assert.NotNil(t, o.Labels(), "labels") {
 		assert.Equal(t, "mypkg", o.Labels()["app.kubernetes.io/part-of"], "label")
 	}

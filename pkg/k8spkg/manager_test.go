@@ -32,13 +32,17 @@ func TestPackageManagerApply(t *testing.T) {
 		require.NoError(t, evt.Error)
 		obj = append(obj, evt.Resource)
 	}
-	//obj := mock.MockResourceList("../resource/test/k8sobjectlist.yaml")
-	pkg := &K8sPackage{&PackageInfo{Name: "somepkg"}, obj}
+	pkg := &K8sPackage{"somepkg", obj}
 	labels := fmt.Sprintf("[%s=%s]", PKG_NAME_LABEL, pkg.Name)
 	for _, ns := range []string{"", "myns"} {
 		expectedCalls := []string{
 			fmt.Sprintf("apply %s/ false []", ns),
 			fmt.Sprintf("apply %s/ %v %s", ns, false, labels), // TODO: test prune
+
+		}
+		expectedCallMap := map[string]int{
+			fmt.Sprintf("watch default/Event [] true"): 1,
+			fmt.Sprintf("watch otherns/Event [] true"): 1,
 		}
 		for _, byNs := range obj.Refs().GroupByNamespace() {
 			for _, byKind := range byNs.Resources.GroupByKind() {
@@ -46,13 +50,9 @@ func TestPackageManagerApply(t *testing.T) {
 				if gns == "" {
 					gns = ns
 				}
-				expectedCalls = append(expectedCalls,
-					fmt.Sprintf("watch %s/%s %s", gns, byKind.Key, labels))
+				expectedCallMap[fmt.Sprintf("watch %s/%s %s false", gns, byKind.Key, labels)] = 1
 			}
 		}
-		expectedCalls = append(expectedCalls,
-			"watch otherns/Pod [app=otherdeployment otherlabel=otherval]",
-		)
 		obj[len(obj)-1].Conditions()[0].Status = false
 		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
 			testee = NewPackageManager(c, ns)
@@ -60,13 +60,19 @@ func TestPackageManagerApply(t *testing.T) {
 			for i, res := range obj {
 				evts[i] = resource.ResourceEvent{res, c.MockErr}
 			}
+			evts[len(evts)-1].Resource.Conditions()[1].Status = false
 			c.MockWatchEvents = evts
 			err = testee.Apply(context.Background(), pkg, false)
 			require.Error(t, err, "unavailable (last) deployment should cause error")
 			if c.MockErr == nil {
-				require.Equal(t, expectedCalls, c.Calls, "client calls")
+				require.Equal(t, expectedCalls, c.Calls[:2], "client calls")
+				callMap := map[string]int{}
+				for _, call := range c.Calls[2:] {
+					callMap[call]++
+				}
+				require.Equal(t, expectedCallMap, callMap, "rollout observation client calls")
 			}
-			evts[len(evts)-1].Resource.Conditions()[0].Status = true
+			evts[len(evts)-1].Resource.Conditions()[1].Status = true
 			c.Calls = c.Calls[:0]
 			c.Applied = nil
 			if err = testee.Apply(context.Background(), pkg, false); err == nil {
@@ -88,7 +94,16 @@ func TestPackageManagerList(t *testing.T) {
 		}
 		assertPkgManagerCall(t, func(testee *PackageManager, c *mock.ClientMock) (err error) {
 			c.MockResources = appRes
-			apps, err := testee.List(context.Background(), ns)
+			var apps []*App
+			for evt := range testee.List(context.Background(), ns) {
+				if evt.Err != nil {
+					if err == nil {
+						err = evt.Err
+					}
+					continue
+				}
+				apps = append(apps, evt.App)
+			}
 			if err == nil {
 				require.Equal(t, []*App{testApp, &testApp2}, apps, "retrieved")
 				require.Equal(t, expectedCalls, c.Calls, "client calls")
