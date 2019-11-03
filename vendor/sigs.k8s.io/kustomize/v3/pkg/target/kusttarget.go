@@ -81,7 +81,7 @@ func commaOr(q []string) string {
 func loadKustFile(ldr ifc.Loader) ([]byte, error) {
 	var content []byte
 	match := 0
-	for _, kf := range pgmconfig.KustomizationFileNames {
+	for _, kf := range pgmconfig.RecognizedKustomizationFileNames() {
 		c, err := ldr.Load(kf)
 		if err == nil {
 			match += 1
@@ -92,7 +92,8 @@ func loadKustFile(ldr ifc.Loader) ([]byte, error) {
 	case 0:
 		return nil, fmt.Errorf(
 			"unable to find one of %v in directory '%s'",
-			commaOr(quoted(pgmconfig.KustomizationFileNames)), ldr.Root())
+			commaOr(quoted(pgmconfig.RecognizedKustomizationFileNames())),
+			ldr.Root())
 	case 1:
 		return content, nil
 	default:
@@ -250,31 +251,23 @@ func (kt *KustTarget) AccumulateTarget() (
 
 func (kt *KustTarget) runGenerators(
 	ra *accumulator.ResAccumulator) error {
-	generators, err := kt.configureBuiltinGenerators()
+	var generators []resmap.Generator
+	gs, err := kt.configureBuiltinGenerators()
 	if err != nil {
 		return err
 	}
-	for _, g := range generators {
-		resMap, err := g.Generate()
-		if err != nil {
-			return err
-		}
-		// The legacy generators allow override.
-		err = ra.AbsorbAll(resMap)
-		if err != nil {
-			return errors.Wrapf(err, "merging from generator %v", g)
-		}
-	}
-	generators, err = kt.configureExternalGenerators()
+	generators = append(generators, gs...)
+	gs, err = kt.configureExternalGenerators()
 	if err != nil {
 		return errors.Wrap(err, "loading generator plugins")
 	}
+	generators = append(generators, gs...)
 	for _, g := range generators {
 		resMap, err := g.Generate()
 		if err != nil {
 			return err
 		}
-		err = ra.AppendAll(resMap)
+		err = ra.AbsorbAll(resMap)
 		if err != nil {
 			return errors.Wrapf(err, "merging from generator %v", g)
 		}

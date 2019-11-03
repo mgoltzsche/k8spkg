@@ -16,7 +16,7 @@ import (
 )
 
 func Render(o RenderOptions) (err error) {
-	fSys := fs.MakeRealFS()
+	fSys := fs.MakeFsOnDisk()
 	uf := kunstruct.NewKunstructuredFactoryImpl()
 	ptf := transformimpl.NewFactoryImpl()
 	rf := resmap.NewFactory(resource.NewFactory(uf), ptf)
