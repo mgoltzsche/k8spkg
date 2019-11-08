@@ -173,9 +173,6 @@ func (m *PackageManager) logPodError(ctx context.Context, pod resource.K8sResour
 }
 
 func (m *PackageManager) watch(ctx context.Context, appName string, resources resource.K8sResourceRefList) <-chan resource.ResourceEvent {
-	if len(resources) == 0 {
-		panic("watch: no resources provided")
-	}
 	pkgSelector := m.labelSelector(appName)
 	evts := make(chan resource.ResourceEvent)
 	wg := sync.WaitGroup{}
