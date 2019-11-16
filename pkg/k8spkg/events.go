@@ -23,10 +23,10 @@ type Event struct {
 
 func Events(ctx context.Context, forRes resource.K8sResourceRefList, c client.K8sClient) <-chan Event {
 	msgMap := map[string]bool{}
-	known := map[string]resource.K8sResourceRef{}
+	knownNames := map[string]bool{}
 	for _, res := range forRes {
-		known[res.ID()] = res
-		known[res.Name()] = res
+		knownNames[res.ID()] = true
+		knownNames[res.Name()] = true
 	}
 	ch := make(chan Event)
 	wg := &sync.WaitGroup{}
@@ -53,16 +53,18 @@ func Events(ctx context.Context, forRes resource.K8sResourceRefList, c client.K8
 					resNamespace, _, _ := unstructured.NestedString(rawInvolved, "namespace")
 					resFieldPath, _, _ := unstructured.NestedString(rawInvolved, "fieldPath")
 					involved := resource.ResourceRef(resApiVersion, resKind, resNamespace, resName)
-					knownObj := known[involved.ID()]
-					if knownObj == nil && involved.Kind() == "Pod" {
-						l := strings.Split(involved.Name(), "-")
-						if len(l) > 2 {
-							knownObj = known[strings.Join(l[:len(l)-2], "-")]
+					contained := knownNames[involved.ID()]
+					if !contained && (resKind == "Pod" || resKind == "ReplicaSet" || resKind == "StatefulSet") {
+						// include daemonset's or deployment's pod events
+						if l := strings.Split(involved.Name(), "-"); len(l) > 2 {
+							if contained = knownNames[strings.Join(l[:len(l)-1], "-")]; !contained {
+								contained = knownNames[strings.Join(l[:len(l)-2], "-")]
+							}
 						}
 					}
-					if knownObj != nil {
+					if contained {
 						// emit unique event
-						msgKey := fmt.Sprintf("%s: %s: %s: %s", knownObj.ID(), resFieldPath, reason, message)
+						msgKey := fmt.Sprintf("%s/%s: %s: %s: %s", involved.QualifiedKind(), resName, resFieldPath, reason, message)
 						if !msgMap[msgKey] {
 							msgMap[msgKey] = true
 							ch <- Event{

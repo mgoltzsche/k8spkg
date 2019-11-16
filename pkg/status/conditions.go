@@ -13,7 +13,7 @@ var (
 	RolloutConditions = map[string]Condition{
 		"Deployment":  DeploymentRolloutCondition("available"),
 		"Pod":         NewCondition("ready"),
-		"Job":         NewCondition("ready"),
+		"Job":         NewCondition("complete"),
 		"Certificate": NewCondition("ready"),
 		"DaemonSet":   DaemonSetRolloutCondition("daemonset-rollout-condition"),
 		"APIService":  NewCondition("available"),
