@@ -113,6 +113,7 @@ func (c *ClientMock) Watch(ctx context.Context, kind, namespace string, labels [
 				"conditions": []interface{}{
 					map[string]interface{}{"type": "Available", "status": "True"},
 					map[string]interface{}{"type": "Ready", "status": "True"},
+					map[string]interface{}{"type": "Established", "status": "True"},
 				},
 				"observedGeneration":     3.0,
 				"replicas":               2.0,

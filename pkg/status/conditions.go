@@ -11,12 +11,13 @@ import (
 var (
 	condGeneric       = genericCondition("genericCondition")
 	RolloutConditions = map[string]Condition{
-		"Deployment":  DeploymentRolloutCondition("available"),
-		"Pod":         NewCondition("ready"),
-		"Job":         NewCondition("complete"),
-		"Certificate": NewCondition("ready"),
-		"DaemonSet":   DaemonSetRolloutCondition("daemonset-rollout-condition"),
-		"APIService":  NewCondition("available"),
+		"Deployment":               DeploymentRolloutCondition("available"),
+		"Pod":                      NewCondition("ready"),
+		"Job":                      NewCondition("complete"),
+		"Certificate":              NewCondition("ready"),
+		"DaemonSet":                DaemonSetRolloutCondition("daemonset-rollout-condition"),
+		"APIService":               NewCondition("available"),
+		"CustomResourceDefinition": NewCondition("established"),
 	}
 )
 
